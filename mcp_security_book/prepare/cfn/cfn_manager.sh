@@ -1,14 +1,16 @@
 #!/bin/bash
 
-# VS Code Server Stack Manager
-# CloudFormation + EC2 + VS Code Server の操作スクリプト
+# VS Code Server Nested Stack Manager
+# CloudFormation + EC2 + VS Code Server の操作スクリプト（ネストされたスタック版）
 
 set -e
 
 # デフォルト設定
 DEFAULT_REGION="us-east-1"
 DEFAULT_INSTANCE_TYPE="c7i.4xlarge"
-TEMPLATE_FILE="ec2-cf-vscode.yml"
+TEMPLATE_DIR="."
+MAIN_TEMPLATE="main.yml"
+S3_BUCKET_PREFIX="vscode-cfn-templates"
 
 # 色付きメッセージ
 RED='\033[0;31m'
@@ -42,7 +44,7 @@ log_vscode() {
 # ヘルプ表示
 show_help() {
     cat << EOF
-🚀 VS Code Server Stack Manager
+🚀 VS Code Server Nested Stack Manager
 
 使用方法:
     $0 <command> [options]
@@ -58,12 +60,14 @@ show_help() {
     delete      - スタックを削除
     list        - 全スタック一覧
     validate    - テンプレート検証
+    upload      - テンプレートをS3にアップロード
 
 オプション:
     -n, --name NAME         スタック名 (デフォルト: vscode-server-USERNAME)
     -r, --region REGION     AWSリージョン (デフォルト: $DEFAULT_REGION)
     -t, --type TYPE         インスタンスタイプ (デフォルト: $DEFAULT_INSTANCE_TYPE)
     -u, --user USER         VS Code Serverユーザー名 (デフォルト: coder)
+    -b, --bucket BUCKET     S3バケット名 (デフォルト: $S3_BUCKET_PREFIX-ACCOUNT_ID-REGION)
     -h, --help              このヘルプを表示
 
 インスタンスタイプ:
@@ -72,6 +76,9 @@ show_help() {
     • t3.medium, t3.large, t3.xlarge
 
 使用例:
+    # テンプレートをS3にアップロード
+    $0 upload
+
     # 基本的な作成
     $0 create
 
@@ -95,6 +102,7 @@ show_help() {
     🌐 CloudFront経由でアクセス可能
     🔐 SSM Session Managerで安全に接続
     🐳 Docker、Git、AWS CLI、uvが事前インストール済み
+    📦 ネストされたスタックでサイズ制限を回避
 EOF
 }
 
@@ -106,10 +114,11 @@ parse_args() {
     INSTANCE_TYPE="$DEFAULT_INSTANCE_TYPE"
     VSCODE_USER="coder"
     USER_NAME=$(whoami)
+    S3_BUCKET=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
-            create|status|monitor|outputs|connect|open|logs|delete|list|validate)
+            create|status|monitor|outputs|connect|open|logs|delete|list|validate|upload)
                 COMMAND="$1"
                 shift
                 ;;
@@ -127,6 +136,10 @@ parse_args() {
                 ;;
             -u|--user)
                 VSCODE_USER="$2"
+                shift 2
+                ;;
+            -b|--bucket)
+                S3_BUCKET="$2"
                 shift 2
                 ;;
             -h|--help)
@@ -151,6 +164,12 @@ parse_args() {
         show_help
         exit 1
     fi
+
+    # デフォルトS3バケット名
+    if [[ -z "$S3_BUCKET" ]]; then
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        S3_BUCKET="${S3_BUCKET_PREFIX}-${ACCOUNT_ID}-${REGION}"
+    fi
 }
 
 # AWS CLI確認
@@ -167,11 +186,93 @@ check_aws_cli() {
 }
 
 # テンプレートファイル確認
-check_template() {
-    if [[ ! -f "$TEMPLATE_FILE" ]]; then
-        log_error "テンプレートファイルが見つかりません: $TEMPLATE_FILE"
+check_templates() {
+    local templates=("main.yml" "secrets.yml" "lambda.yml" "ec2.yml" "ssm.yml" "cloudfront.yml" "custom.yml")
+    local missing=0
+
+    for template in "${templates[@]}"; do
+        if [[ ! -f "$TEMPLATE_DIR/$template" ]]; then
+            log_error "テンプレートファイルが見つかりません: $TEMPLATE_DIR/$template"
+            missing=1
+        fi
+    done
+
+    if [[ $missing -eq 1 ]]; then
         exit 1
     fi
+}
+
+# S3バケット確認・作成
+ensure_s3_bucket() {
+    if aws s3api head-bucket --bucket "$S3_BUCKET" 2>/dev/null; then
+        log_info "S3バケットが存在します: $S3_BUCKET"
+    else
+        log_info "S3バケットを作成中: $S3_BUCKET"
+        aws s3api create-bucket \
+            --bucket "$S3_BUCKET" \
+            --region "$REGION" \
+            --create-bucket-configuration LocationConstraint="$REGION" 2>/dev/null || true
+
+        # us-east-1はLocationConstraintが不要
+        if [[ "$REGION" == "us-east-1" ]]; then
+            aws s3api create-bucket \
+                --bucket "$S3_BUCKET" \
+                --region "$REGION" 2>/dev/null || true
+        fi
+
+        # バケットポリシーを設定（オプション）
+        aws s3api put-bucket-lifecycle-configuration \
+            --bucket "$S3_BUCKET" \
+            --lifecycle-configuration '{
+                "Rules": [
+                    {
+                        "ID": "ExpireOldTemplates",
+                        "Status": "Enabled",
+                        "Expiration": {
+                            "Days": 7
+                        },
+                        "Filter": {
+                            "Prefix": "templates/"
+                        }
+                    }
+                ]
+            }' 2>/dev/null || log_warning "ライフサイクルポリシーの設定に失敗しました"
+    fi
+}
+
+# テンプレートをS3にアップロード
+upload_templates() {
+    log_info "テンプレートをS3にアップロード中..."
+    ensure_s3_bucket
+
+    local templates=("main.yml" "secrets.yml" "lambda.yml" "ec2.yml" "ssm.yml" "cloudfront.yml" "custom.yml")
+    local timestamp=$(date +%s)
+    local template_prefix="templates/$timestamp"
+
+    for template in "${templates[@]}"; do
+        log_info "アップロード中: $template"
+        aws s3 cp "$TEMPLATE_DIR/$template" "s3://$S3_BUCKET/$template_prefix/$template" --region "$REGION"
+    done
+
+    # メインテンプレートを修正してS3パスを更新
+    local temp_main=$(mktemp)
+    cat "$TEMPLATE_DIR/main.yml" > "$temp_main"
+
+    # テンプレートURLを更新
+    sed -i.bak "s|TemplateURL: \./|TemplateURL: https://$S3_BUCKET.s3.$REGION.amazonaws.com/$template_prefix/|g" "$temp_main"
+
+    # 修正したメインテンプレートをアップロード
+    aws s3 cp "$temp_main" "s3://$S3_BUCKET/$template_prefix/main.yml" --region "$REGION"
+
+    # 一時ファイルを削除
+    rm "$temp_main" "$temp_main.bak"
+
+    log_success "テンプレートのアップロードが完了しました"
+    echo "S3 URL: s3://$S3_BUCKET/$template_prefix/"
+    echo "メインテンプレートURL: https://$S3_BUCKET.s3.$REGION.amazonaws.com/$template_prefix/main.yml"
+
+    # グローバル変数に保存
+    TEMPLATE_S3_URL="https://$S3_BUCKET.s3.$REGION.amazonaws.com/$template_prefix/main.yml"
 }
 
 # スタック作成
@@ -182,16 +283,17 @@ create_stack() {
     log_info "インスタンスタイプ: $INSTANCE_TYPE"
     log_info "VS Codeユーザー: $VSCODE_USER"
 
-    check_template
+    check_templates
+    upload_templates
 
     aws cloudformation create-stack \
         --stack-name "$STACK_NAME" \
-        --template-body "file://$TEMPLATE_FILE" \
+        --template-url "$TEMPLATE_S3_URL" \
         --parameters \
-            "ParameterKey=VSCodeServerUser,ParameterValue=$VSCODE_USER" \
+            "ParameterKey=CodeServerUser,ParameterValue=$VSCODE_USER" \
             "ParameterKey=InstanceType,ParameterValue=$INSTANCE_TYPE" \
             "ParameterKey=InstanceName,ParameterValue=$STACK_NAME" \
-        --capabilities CAPABILITY_IAM \
+        --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
         --region "$REGION"
 
     log_success "スタック作成を開始しました"
@@ -329,13 +431,12 @@ show_quick_info() {
     fi
 
     if [[ -n "$password" && "$password" != "None" ]]; then
-        log_info "🔑 接続トークン:"
+        log_info "🔑 接続パスワード:"
         echo "   $password"
         echo ""
         log_info "💡 アクセス方法:"
         echo "   1. ブラウザでURLにアクセス"
-        echo "   2. トークン入力画面で上記トークンを入力"
-        echo "   3. または直接: ${vscode_url%\?*}?tkn=$password"
+        echo "   2. パスワード入力画面で上記パスワードを入力"
         echo ""
     fi
 
@@ -365,23 +466,37 @@ connect_to_instance() {
     instance_id=$(aws cloudformation describe-stack-resources \
         --stack-name "$STACK_NAME" \
         --region "$REGION" \
-        --logical-resource-id VSCodeServerInstance \
+        --logical-resource-id "EC2Stack" \
         --query 'StackResources[0].PhysicalResourceId' \
         --output text 2>/dev/null)
 
     if [[ -z "$instance_id" || "$instance_id" == "None" ]]; then
+        log_error "EC2スタックIDを取得できませんでした"
+        return 1
+    fi
+
+    # ネストされたスタックからEC2インスタンスIDを取得
+    local ec2_instance_id
+    ec2_instance_id=$(aws cloudformation describe-stack-resources \
+        --stack-name "$instance_id" \
+        --region "$REGION" \
+        --logical-resource-id "CodeServerInstance" \
+        --query 'StackResources[0].PhysicalResourceId' \
+        --output text 2>/dev/null)
+
+    if [[ -z "$ec2_instance_id" || "$ec2_instance_id" == "None" ]]; then
         log_error "インスタンスIDを取得できませんでした"
         return 1
     fi
 
-    log_info "インスタンスID: $instance_id"
+    log_info "インスタンスID: $ec2_instance_id"
     log_info "ユーザー: $VSCODE_USER"
     log_info "Session Manager Pluginが必要です"
     echo ""
 
     # SSM Session Manager で接続
     aws ssm start-session \
-        --target "$instance_id" \
+        --target "$ec2_instance_id" \
         --region "$REGION"
 }
 
@@ -451,6 +566,7 @@ delete_stack() {
     log_warning "これにより以下が削除されます:"
     echo "   • EC2インスタンス"
     echo "   • CloudFront Distribution"
+    echo "   • Lambda関数"
     echo "   • セキュリティグループ"
     echo "   • 全ての関連リソース"
     echo ""
@@ -483,15 +599,38 @@ list_stacks() {
 
 # テンプレート検証
 validate_template() {
-    check_template
-    log_info "🔍 テンプレートを検証中: $TEMPLATE_FILE"
+    check_templates
+    log_info "🔍 テンプレートを検証中: $TEMPLATE_DIR/$MAIN_TEMPLATE"
 
     if aws cloudformation validate-template \
-        --template-body "file://$TEMPLATE_FILE" \
+        --template-body "file://$TEMPLATE_DIR/$MAIN_TEMPLATE" \
         --region "$REGION" > /dev/null; then
-        log_success "✅ テンプレート検証成功"
+        log_success "✅ メインテンプレート検証成功"
     else
-        log_error "❌ テンプレート検証失敗"
+        log_error "❌ メインテンプレート検証失敗"
+        return 1
+    fi
+
+    # 他のテンプレートも検証
+    local templates=("secrets.yml" "lambda.yml" "ec2.yml" "ssm.yml" "cloudfront.yml" "custom.yml")
+    local failed=0
+
+    for template in "${templates[@]}"; do
+        log_info "🔍 テンプレートを検証中: $TEMPLATE_DIR/$template"
+        if aws cloudformation validate-template \
+            --template-body "file://$TEMPLATE_DIR/$template" \
+            --region "$REGION" > /dev/null; then
+            log_success "✅ $template 検証成功"
+        else
+            log_error "❌ $template 検証失敗"
+            failed=1
+        fi
+    done
+
+    if [[ $failed -eq 0 ]]; then
+        log_success "✅ 全テンプレート検証成功"
+    else
+        log_error "❌ 一部テンプレート検証失敗"
         return 1
     fi
 }
@@ -531,6 +670,9 @@ main() {
             ;;
         validate)
             validate_template
+            ;;
+        upload)
+            upload_templates
             ;;
         *)
             log_error "不明なコマンド: $COMMAND"

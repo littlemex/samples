@@ -184,6 +184,46 @@ Resources:
                         proxy_set_header Connection upgrade;
                         proxy_set_header Accept-Encoding gzip;
                       }
+                      location /proxy/13000/ {
+                        proxy_pass http://localhost:13000/;
+                        proxy_set_header Host \$host;
+                        proxy_set_header Upgrade \$http_upgrade;
+                        proxy_set_header Connection upgrade;
+                        proxy_set_header Accept-Encoding gzip;
+                        proxy_set_header Origin https://\$host;
+                        proxy_set_header X-Forwarded-For \$remote_addr;
+                        proxy_http_version 1.1;
+                      }
+                      location /proxy/3000/ {
+                        proxy_pass http://localhost:3000/;
+                        proxy_set_header Host \$host;
+                        proxy_set_header Upgrade \$http_upgrade;
+                        proxy_set_header Connection upgrade;
+                        proxy_set_header Accept-Encoding gzip;
+                        proxy_set_header Origin https://\$host;
+                        proxy_set_header X-Forwarded-For \$remote_addr;
+                        proxy_http_version 1.1;
+                      }
+                      location /proxy/23000/ {
+                        proxy_pass http://localhost:23000/;
+                        proxy_set_header Host \$host;
+                        proxy_set_header Upgrade \$http_upgrade;
+                        proxy_set_header Connection upgrade;
+                        proxy_set_header Accept-Encoding gzip;
+                        proxy_set_header Origin https://\$host;
+                        proxy_set_header X-Forwarded-For \$remote_addr;
+                        proxy_http_version 1.1;
+                      }
+                      location /proxy/8000/ {
+                        proxy_pass http://localhost:8000/;
+                        proxy_set_header Host \$host;
+                        proxy_set_header Upgrade \$http_upgrade;
+                        proxy_set_header Connection upgrade;
+                        proxy_set_header Accept-Encoding gzip;
+                        proxy_set_header Origin https://\$host;
+                        proxy_set_header X-Forwarded-For \$remote_addr;
+                        proxy_http_version 1.1;
+                      }
                   }
                   EOF
                 - !Sub mkdir -p /home/${CodeServerUser}/.config/code-server
