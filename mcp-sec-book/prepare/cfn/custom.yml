@@ -1,0 +1,51 @@
+Description: Custom resources for code-server instance
+
+Parameters:
+  CodeServerInstanceId:
+    Type: String
+    Description: EC2 instance ID for code-server
+  CodeServerSSMDocName:
+    Type: String
+    Description: SSM Document name for code-server
+  RunSSMDocLambdaArn:
+    Type: String
+    Description: Run SSM Doc Lambda ARN
+  CodeServerHealthCheckLambdaArn:
+    Type: String
+    Description: Code Server Health Check Lambda ARN
+  CheckSSMDocLambdaArn:
+    Type: String
+    Description: Check SSM Doc Lambda ARN
+  CloudFrontDomainName:
+    Type: String
+    Description: CloudFront distribution domain name
+  Password:
+    Type: String
+    Description: Code-server Password
+    NoEcho: true
+  HomeFolder:
+    Type: String
+    Description: Folder to open in code-server
+
+Resources:
+  RunCodeServerSSMDoc:
+    Type: Custom::RunSSMDocLambda
+    Properties:
+      ServiceToken: !Ref RunSSMDocLambdaArn
+      ServiceTimeout: 305
+      InstanceId: !Ref CodeServerInstanceId
+      DocumentName: !Ref CodeServerSSMDocName
+      CloudWatchLogGroupName: !Sub /aws/ssm/${CodeServerSSMDocName}
+      CodeServerPassword: !Ref Password
+
+  Healthcheck:
+    Type: Custom::CodeServerHealthCheckLambda
+    Properties:
+      ServiceToken: !Ref CodeServerHealthCheckLambdaArn
+      ServiceTimeout: 2400
+      Url: !Sub https://${CloudFrontDomainName}/healthz
+
+Outputs:
+  URL:
+    Description: Code-server URL
+    Value: !Sub https://${CloudFrontDomainName}/?folder=${HomeFolder}

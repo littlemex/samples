@@ -37,11 +37,23 @@ Parameters:
     Description: Remote repo URL to clone. To not clone a remote repo, leave blank
     Type: String
     Default: 'https://github.com/littlemex/samples.git'
+  InspectorPort:
+    Type: Number
+    Default: 6274
+    Description: Port for MCP Inspector UI
+  AppPort:
+    Type: Number
+    Default: 8000
+    Description: Port for additional application
 
 Conditions:
   IsGraviton:
-    !Not [!Equals [!Select [0, !Split ['g', !Select [0, !Split ['.', !Ref InstanceType]]]],
-                   !Select [0, !Split ['.', !Ref InstanceType]],],]
+    !Not [
+      !Equals [
+        !Select [0, !Split ['g', !Select [0, !Split ['.', !Ref InstanceType]]]],
+        !Select [0, !Split ['.', !Ref InstanceType]],
+      ],
+    ]
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -60,6 +72,8 @@ Metadata:
           - HomeFolder
           - DevServerBasePath
           - DevServerPort
+          - InspectorPort
+          - AppPort
           - RepoUrl
     ParameterLabels:
       VSCodeServerUser:
@@ -78,6 +92,10 @@ Metadata:
         default: Application base path
       DevServerPort:
         default: Application port
+      InspectorPort:
+        default: MCP Inspector port
+      AppPort:
+        default: Additional application port
       RepoUrl:
         default: Git repo URL
 
@@ -187,7 +205,6 @@ Resources:
           
           def lambda_handler(event, context):
               logger.info(f'Event: {json.dumps(event)}')
-              
               try:
                   if event['RequestType'] == 'Delete':
                       cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData={}, reason='No action to take')
@@ -207,7 +224,6 @@ Resources:
                   
                   logger.info('Successfully retrieved secret')
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData=responseData, reason='OK', noEcho=True)
-                  
               except Exception as e:
                   logger.error(f'Error: {str(e)}')
                   cfnresponse.send(event, context, cfnresponse.FAILED, responseData={}, reason=str(e))
@@ -352,6 +368,7 @@ Resources:
                   [Unit]
                   Description=VS Code Server Service
                   After=network.target snapd.service
+                  
                   [Service]
                   Type=simple
                   User=${VSCodeServerUser}
@@ -362,7 +379,8 @@ Resources:
                   WorkingDirectory=${HomeFolder}
                   Restart=always
                   RestartSec=10
-                  ExecStart=/snap/bin/code serve-web --connection-token {{ VSCodeServerPassword }} --accept-server-license-terms --host 0.0.0.0 --port 8080
+                  ExecStart=/snap/bin/code serve-web --connection-token {{ VSCodeServerPassword }} --accept-server-license-terms --host 0.0.0.0 --port 8080 --without-connection-token
+                  
                   [Install]
                   WantedBy=multi-user.target
                   EOF
@@ -392,6 +410,91 @@ Resources:
                       listen [::]:80 default_server;
                       server_name _;
                       
+                      # 静的ファイル用の設定
+                      location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|map)$ {
+                          proxy_pass http://127.0.0.1:8080;
+                          proxy_set_header Host $host;
+                          proxy_set_header X-Real-IP $remote_addr;
+                          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                          proxy_set_header X-Forwarded-Proto $scheme;
+                          expires 1y;
+                          add_header Cache-Control "public, immutable";
+                          proxy_buffering on;
+                          proxy_cache_valid 200 1y;
+                      }
+                      
+                      # assets ディレクトリ用の設定
+                      location /assets/ {
+                          proxy_pass http://127.0.0.1:8080;
+                          proxy_set_header Host $host;
+                          proxy_set_header X-Real-IP $remote_addr;
+                          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                          proxy_set_header X-Forwarded-Proto $scheme;
+                          expires 1y;
+                          add_header Cache-Control "public, immutable";
+                          proxy_buffering on;
+                      }
+                      
+                      # MCP Inspector用の設定
+                      location /inspector/ {
+                          proxy_pass http://127.0.0.1:6274/;
+                          proxy_http_version 1.1;
+                          proxy_set_header Upgrade $http_upgrade;
+                          proxy_set_header Connection 'upgrade';
+                          proxy_set_header Host $host;
+                          proxy_set_header X-Real-IP $remote_addr;
+                          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                          proxy_set_header X-Forwarded-Proto $scheme;
+                          proxy_cache_bypass $http_upgrade;
+                          proxy_read_timeout 86400;
+                          proxy_connect_timeout 60;
+                          proxy_send_timeout 60;
+                      }
+                      
+                      # VS Code CDN用のプロキシ設定
+                      location /vscode-cdn/ {
+                          proxy_pass https://main.vscode-cdn.net/;
+                          proxy_set_header Host main.vscode-cdn.net;
+                          proxy_set_header X-Real-IP $remote_addr;
+                          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                          proxy_set_header X-Forwarded-Proto $scheme;
+                          proxy_ssl_server_name on;
+                          proxy_ssl_verify off;
+                          
+                          # CORSヘッダーを追加
+                          add_header Access-Control-Allow-Origin *;
+                          add_header Access-Control-Allow-Methods "GET, POST, OPTIONS";
+                          add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range";
+                          
+                          # プリフライトリクエスト対応
+                          if ($request_method = 'OPTIONS') {
+                              add_header Access-Control-Allow-Origin *;
+                              add_header Access-Control-Allow-Methods "GET, POST, OPTIONS";
+                              add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range";
+                              add_header Access-Control-Max-Age 1728000;
+                              add_header Content-Type 'text/plain; charset=utf-8';
+                              add_header Content-Length 0;
+                              return 204;
+                          }
+                      }
+                      
+                      # App用の設定
+                      location /app/ {
+                          proxy_pass http://127.0.0.1:8000/;
+                          proxy_http_version 1.1;
+                          proxy_set_header Upgrade $http_upgrade;
+                          proxy_set_header Connection 'upgrade';
+                          proxy_set_header Host $host;
+                          proxy_set_header X-Real-IP $remote_addr;
+                          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                          proxy_set_header X-Forwarded-Proto $scheme;
+                          proxy_cache_bypass $http_upgrade;
+                          proxy_read_timeout 86400;
+                          proxy_connect_timeout 60;
+                          proxy_send_timeout 60;
+                      }
+                      
+                      # メインアプリケーション用の設定
                       location / {
                           proxy_pass http://127.0.0.1:8080;
                           proxy_http_version 1.1;
@@ -415,7 +518,6 @@ Resources:
                 - systemctl enable nginx
                 - sleep 5
                 - systemctl status nginx
-
           - name: Installuv
             action: aws:runShellScript
             precondition:
@@ -504,7 +606,6 @@ Resources:
           
           def lambda_handler(event, context):
               logger.info(f'Event: {json.dumps(event)}')
-              
               try:
                   if event['RequestType'] != 'Create':
                       logger.info('Not a Create request, returning success')
@@ -539,7 +640,6 @@ Resources:
                   while retry and attempt_no < 10:
                       attempt_no += 1
                       time_remaining_ms = context.get_remaining_time_in_millis()
-                      
                       logger.info(f'Attempt {attempt_no}, time remaining: {time_remaining_ms}ms')
                       
                       try:
@@ -569,7 +669,6 @@ Resources:
                               logger.error('Timed out waiting for instance')
                               cfnresponse.send(event, context, cfnresponse.FAILED, responseData={}, reason='Timed out waiting for instance')
                               return
-                              
                       except Exception as e:
                           logger.error(f'Unexpected error: {str(e)}')
                           cfnresponse.send(event, context, cfnresponse.FAILED, responseData={}, reason=str(e))
@@ -646,6 +745,32 @@ Resources:
         - Key: Name
           Value: !Ref InstanceName
 
+  # 静的ファイル用のキャッシュポリシー
+  VSCodeServerStaticCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        DefaultTTL: 86400
+        MaxTTL: 31536000
+        MinTTL: 1
+        Name: !Sub
+          - ${InstanceName}-static-${RandomGUID}
+          - RandomGUID:
+              !Select [0,
+                !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]],
+              ]
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig:
+            CookieBehavior: none
+          EnableAcceptEncodingGzip: True
+          EnableAcceptEncodingBrotli: True
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers:
+              - Origin
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
   VSCodeServerInstanceCachePolicy:
     Type: AWS::CloudFront::CachePolicy
     Properties:
@@ -657,7 +782,8 @@ Resources:
           - ${InstanceName}-${RandomGUID}
           - RandomGUID:
               !Select [0,
-                !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]],]
+                !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]],
+              ]
         ParametersInCacheKeyAndForwardedToOrigin:
           CookiesConfig:
             CookieBehavior: all
@@ -684,6 +810,73 @@ Resources:
         Enabled: True
         HttpVersion: http2and3
         CacheBehaviors:
+          # 静的ファイル用のキャッシュビヘイビア
+          - AllowedMethods:
+              - GET
+              - HEAD
+            CachePolicyId: !Ref VSCodeServerStaticCachePolicy
+            Compress: True
+            TargetOriginId: !Sub CloudFront-${AWS::StackName}
+            ViewerProtocolPolicy: redirect-to-https
+            PathPattern: '/assets/*'
+          # MCP Inspector用のキャッシュビヘイビア
+          - AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - PATCH
+              - POST
+              - DELETE
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            Compress: False
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+            TargetOriginId: !Sub CloudFront-${AWS::StackName}
+            ViewerProtocolPolicy: allow-all
+            PathPattern: '/inspector/*'
+          # VS Code CDN用のキャッシュビヘイビア
+          - AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachePolicyId: !Ref VSCodeServerStaticCachePolicy
+            Compress: True
+            TargetOriginId: !Sub CloudFront-${AWS::StackName}
+            ViewerProtocolPolicy: redirect-to-https
+            PathPattern: '/vscode-cdn/*'
+          # App用のキャッシュビヘイビア
+          - AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - PATCH
+              - POST
+              - DELETE
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            Compress: False
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+            TargetOriginId: !Sub CloudFront-${AWS::StackName}
+            ViewerProtocolPolicy: allow-all
+            PathPattern: '/app/*'
+          # 静的ファイル拡張子用のキャッシュビヘイビア
+          - AllowedMethods:
+              - GET
+              - HEAD
+            CachePolicyId: !Ref VSCodeServerStaticCachePolicy
+            Compress: True
+            TargetOriginId: !Sub CloudFront-${AWS::StackName}
+            ViewerProtocolPolicy: redirect-to-https
+            PathPattern: '*.js'
+          - AllowedMethods:
+              - GET
+              - HEAD
+            CachePolicyId: !Ref VSCodeServerStaticCachePolicy
+            Compress: True
+            TargetOriginId: !Sub CloudFront-${AWS::StackName}
+            ViewerProtocolPolicy: redirect-to-https
+            PathPattern: '*.css'
+          # プロキシ用のキャッシュビヘイビア
           - AllowedMethods:
               - GET
               - HEAD
