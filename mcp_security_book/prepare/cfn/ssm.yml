@@ -67,7 +67,7 @@ Resources:
               runCommand:
                 - '#!/bin/bash'
                 - dpkg --configure -a
-                - apt-get -q update && DEBIAN_FRONTEND=noninteractive apt-get install -y -q curl gnupg whois argon2 unzip nginx openssl locales locales-all apt-transport-https ca-certificates software-properties-common python3-pip nodejs npm graphviz
+                - apt-get -q update && DEBIAN_FRONTEND=noninteractive apt-get install -y -q curl gnupg whois argon2 unzip nginx openssl locales locales-all apt-transport-https ca-certificates software-properties-common python3-pip nodejs npm graphviz jq
           - name: AddUserApt
             action: aws:runShellScript
             inputs:
