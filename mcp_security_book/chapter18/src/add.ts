@@ -326,7 +326,7 @@ app.post('/change-description', (req: express.Request, res: express.Response): v
     currentVersion: currentToolDescriptionVersion,
     currentDescription:
       toolDescriptions[currentToolDescriptionVersion as keyof typeof toolDescriptions],
-    message: 'ツール説明が変更されました。これは Rug Pulls 攻撃のデモンストレーションです。',
+    message: 'ツール説明が変更されました。これは Rug Pull 攻撃のデモンストレーションです。',
   });
 });
 
