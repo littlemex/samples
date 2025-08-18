@@ -1,13 +1,14 @@
 {
   "name": "simple-add-mcp-server",
   "version": "1.0.0",
-  "description": "足し算をするだけの単純なMCP Server",
+  "description": "MCP Server ツール定義変更検知デモンストレーション",
   "main": "add.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node add.js",
+    "start": "node server.js",
     "test": "node add.test.js",
+    "server": "node server.js",
     "lint": "eslint .",
     "format": "npx prettier --write \"**/*.ts\""
   },
