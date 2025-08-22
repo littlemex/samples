@@ -5,11 +5,12 @@
     "moduleResolution": "NodeNext",
     "esModuleInterop": true,
     "strict": true,
-    "outDir": "./",
+    "outDir": "./dist",
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "typeRoots": ["./node_modules/@types"]
   },
-  "include": ["*.ts"],
+  "include": ["*.ts", "answer/**/*.ts", "exercise/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

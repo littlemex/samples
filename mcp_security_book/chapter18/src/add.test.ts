@@ -42,9 +42,9 @@ function assertEquals<T>(actual: T, expected: T, message?: string): void {
 /**
  * オブジェクトが特定のプロパティを持つことを検証する関数
  */
-function assertHasProperties<T>(obj: T, props: string[], message?: string): void {
+function assertHasProperties<T extends object>(obj: T, props: string[], message?: string): void {
   for (const prop of props) {
-    if (!(prop in (obj as any))) {
+    if (!(prop in obj)) {
       throw new Error(message || `オブジェクトにプロパティ '${prop}' がありません`);
     }
   }

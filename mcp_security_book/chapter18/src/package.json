@@ -1,18 +1,31 @@
 {
   "name": "simple-add-mcp-server",
   "version": "1.0.0",
-  "description": "足し算をするだけの単純なMCP Server",
-  "main": "add.js",
+  "description": "MCP Server ツール定義変更検知デモンストレーション",
+  "main": "dist/add.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node add.js",
-    "test": "node add.test.js",
-    "lint": "eslint .",
-    "format": "npx prettier --write \"**/*.ts\""
+    "start": "node dist/server.js",
+    "test": "npm run test:all",
+    "test:all": "node dist/add.test.js && node dist/security-utils.test.js && node dist/client-validator.test.js && node dist/server.test.js && node dist/client-hash-monitor.test.js",
+    "test:add": "node dist/add.test.js",
+    "test:security": "node dist/security-utils.test.js",
+    "test:validator": "node dist/client-validator.test.js",
+    "test:server": "node dist/server.test.js",
+    "test:hash-monitor": "node dist/client-hash-monitor.test.js",
+    "server": "node dist/server.js",
+    "demo-secure": "node dist/demo-secure-client.js",
+    "demo": "node dist/demo-listchanged-detection.js",
+    "lint": "eslint *.ts answer/**/*.ts",
+    "lint:fix": "eslint *.ts answer/**/*.ts --fix",
+    "format": "npx prettier --write \"**/*.ts\"",
+    "validate": "node dist/client-validator.js validate",
+    "list": "node dist/client-validator.js list"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.13.2",
+    "eventsource": "^4.0.0",
     "express": "^4.18.2",
     "zod": "^3.22.4"
   },
@@ -21,7 +34,7 @@
     "@types/node": "^20.10.5",
     "eslint": "^8.56.0",
     "prettier": "^3.6.2",
-    "typescript": "^5.3.3",
+    "typescript": "~5.5.0",
     "typescript-eslint": "^7.0.0"
   }
 }
