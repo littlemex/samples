@@ -134,6 +134,11 @@ npm run demo
 
 `secure-mcp-client.ts` は typescript-sdk をあえて利用せずに簡易に実装しました。typescript-sdk を用いた Client 実装を試してみましょう。解答例を `src/answer` に配置しました。`src/exercise` に自分で実装してみましょう。
 
+```bash
+npm run build
+node dist/answer/demo.js
+```
+
 ## 🛡️ セキュリティ機能
 
 ### Client 側ハッシュ計算

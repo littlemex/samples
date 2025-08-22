@@ -17,8 +17,8 @@
     "server": "node dist/server.js",
     "demo-secure": "node dist/demo-secure-client.js",
     "demo": "node dist/demo-listchanged-detection.js",
-    "lint": "eslint *.ts",
-    "lint:fix": "eslint *.ts --fix",
+    "lint": "eslint *.ts answer/**/*.ts",
+    "lint:fix": "eslint *.ts answer/**/*.ts --fix",
     "format": "npx prettier --write \"**/*.ts\"",
     "validate": "node dist/client-validator.js validate",
     "list": "node dist/client-validator.js list"
