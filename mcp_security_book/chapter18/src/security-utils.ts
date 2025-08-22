@@ -213,7 +213,7 @@ export class SecurityUtils {
       currentHash,
       message: isValid
         ? 'ツール定義は変更されていません。'
-        : '警告: ツール定義が変更されています！Rug Pulls 攻撃の可能性があります。',
+        : '警告: ツール定義が変更されています！Rug Pull 攻撃の可能性があります。',
     };
   }
 

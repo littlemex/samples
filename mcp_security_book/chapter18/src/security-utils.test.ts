@@ -297,7 +297,7 @@ describe('SecurityUtils with InMemoryStorageProvider', () => {
     assertEquals(result.currentHash, calculateToolHash(modifiedTool));
     assertEquals(
       result.message,
-      '警告: ツール定義が変更されています！Rug Pull攻撃の可能性があります。'
+      '警告: ツール定義が変更されています！Rug Pull 攻撃の可能性があります。'
     );
   });
 

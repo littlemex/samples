@@ -50,7 +50,7 @@ export class SecureMCPClient {
   private sessionId: string | null = null;
   private isInitialized = false;
   private eventSource: EventSource | null = null;
-  private notificationHandlers: Map<string, (data: any) => void> = new Map();
+  private notificationHandlers: Map<string, (data: unknown) => void> = new Map();
 
   constructor(serverUrl: string) {
     this.serverUrl = serverUrl;
@@ -65,7 +65,7 @@ export class SecureMCPClient {
   private async sendRequest(request: MCPRequest): Promise<MCPResponse> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Accept': 'application/json, text/event-stream',
+      Accept: 'application/json, text/event-stream',
     };
 
     if (this.sessionId) {
@@ -99,7 +99,7 @@ export class SecureMCPClient {
       jsonrpc: '2.0',
       method: 'initialize',
       params: {
-        protocolVersion: '1.0.0',
+        protocolVersion: '2025-06-18',
         capabilities: {},
         clientInfo: {
           name: 'secure-mcp-client',
@@ -254,14 +254,14 @@ export class SecureMCPClient {
     });
 
     // SSE 接続を開始
-    const sseUrl = `${this.serverUrl}/mcp?session=${this.sessionId}`;
+    const sseUrl = `${this.serverUrl}/mcp?mcp-session-id=${this.sessionId}&mcp-protocol-version=2025-06-18`;
     this.eventSource = new EventSource(sseUrl);
 
-    this.eventSource.onopen = () => {
+    this.eventSource.onopen = (): void => {
       console.log('✅ SSE 接続確立完了');
     };
 
-    this.eventSource.onmessage = (event) => {
+    this.eventSource.onmessage = (event): void => {
       try {
         const notification = JSON.parse(event.data);
         this.handleNotification(notification);
@@ -270,7 +270,7 @@ export class SecureMCPClient {
       }
     };
 
-    this.eventSource.onerror = (error) => {
+    this.eventSource.onerror = (error): void => {
       console.error('SSE 接続エラー:', error);
     };
 
@@ -283,7 +283,7 @@ export class SecureMCPClient {
    * @param method 通知メソッド名
    * @param handler ハンドラー関数
    */
-  private registerNotificationHandler(method: string, handler: (data: any) => void): void {
+  private registerNotificationHandler(method: string, handler: (data: unknown) => void): void {
     this.notificationHandlers.set(method, handler);
     console.log(`通知ハンドラー登録: ${method}`);
   }
@@ -292,14 +292,15 @@ export class SecureMCPClient {
    * 受信した通知を処理
    * @param notification 通知オブジェクト
    */
-  private handleNotification(notification: any): void {
-    if (notification.method) {
-      const handler = this.notificationHandlers.get(notification.method);
+  private handleNotification(notification: unknown): void {
+    const notif = notification as { method?: string; params?: unknown };
+    if (notif.method) {
+      const handler = this.notificationHandlers.get(notif.method);
       if (handler) {
-        console.log(`\n🔔 通知受信: ${notification.method}`);
-        handler(notification.params || {});
+        console.log(`\n🔔 通知受信: ${notif.method}`);
+        handler(notif.params || {});
       } else {
-        console.log(`未処理の通知: ${notification.method}`);
+        console.log(`未処理の通知: ${notif.method}`);
       }
     }
   }
@@ -308,7 +309,7 @@ export class SecureMCPClient {
    * listChanged 通知を処理してセキュリティ検証を実行
    * @param data 通知データ
    */
-  private async handleListChangedNotification(data: any): Promise<void> {
+  private async handleListChangedNotification(data: unknown): Promise<void> {
     console.log('\n🚨 === Tool 定義変更通知受信 ===');
     console.log('通知データ:', JSON.stringify(data, null, 2));
 
@@ -322,23 +323,24 @@ export class SecureMCPClient {
       const validationResults = await this.hashMonitor.validateAllTools(currentTools);
 
       // 検証結果を分析
-      const compromisedTools = validationResults.filter(result => !result.isValid);
+      const compromisedTools = validationResults.filter((result) => !result.isValid);
 
       if (compromisedTools.length > 0) {
         console.error('\n🚨 セキュリティアラート: Rug Pull 攻撃を検出しました！');
         console.error(`変更された Tool 数: ${compromisedTools.length}`);
-        
-        compromisedTools.forEach(tool => {
+
+        compromisedTools.forEach((tool) => {
           console.error(`❌ Tool ${tool.toolName}:`);
           console.error(`  期待値: ${tool.baselineHash}`);
           console.error(`  現在値: ${tool.currentHash}`);
         });
 
-        console.error('\n⚠️  これらの Tool の使用は危険です。攻撃者によって定義が変更された可能性があります。');
+        console.error(
+          '\n⚠️  これらの Tool の使用は危険です。攻撃者によって定義が変更された可能性があります。'
+        );
       } else {
         console.log('\n✅ セキュリティ検証完了: 全ての Tool が安全です');
       }
-
     } catch (error) {
       console.error('listChanged 通知処理エラー:', error);
     }
