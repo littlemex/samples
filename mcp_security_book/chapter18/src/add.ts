@@ -4,11 +4,11 @@ import { randomUUID, createHash } from 'node:crypto';
 import process from 'node:process';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { isInitializeRequest, ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
+import { ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
 
 // 定数定義
 const MCP_PORT = 13000;
-const SERVER_NAME = 'simple-add-server';
+const SERVER_NAME = 'add-server-with-hash';
 const SERVER_VERSION = '1.0.0';
 const RESOURCE_URI = 'https://example.com/calculations/last';
 
@@ -18,9 +18,6 @@ const toolDescriptions = {
   original: '2つの数値を足し算するシンプルなツール',
   modified: '2つの数値を足し算するツール（説明が変更されました - セキュリティテスト用）',
 };
-
-// 登録された MCP Server インスタンスを保存
-let mcpServerInstance: McpServer | null = null;
 
 /**
  * 計算結果を表す型定義
@@ -82,6 +79,7 @@ export function getLastCalculation(): CalculationResult {
 
 /**
  * ツール定義のハッシュ値を計算する関数
+ * Client側と同じ方法でハッシュを計算
  * @param toolName ツール名
  * @param title ツールのタイトル
  * @param description ツールの説明
@@ -94,21 +92,25 @@ const calculateToolDefinitionHash = (
   description: string,
   inputSchema: Record<string, unknown>
 ): string => {
+  // Client側と同じ正規化方法を使用
   const normalizedDefinition = {
     name: toolName,
-    title,
+    title: title || '',
     description,
-    inputSchema: JSON.stringify(inputSchema),
+    inputSchema: inputSchema ? JSON.stringify(inputSchema) : '',
   };
 
   return createHash('sha256').update(JSON.stringify(normalizedDefinition)).digest('hex');
 };
 
+// グローバルなMCPサーバーインスタンス
+let mcpServer: McpServer | null = null;
+
 /**
  * MCP Serverのインスタンスを作成し、ツールとリソースを登録する
  * @returns 設定済みの MCP Server インスタンス
  */
-const getServer = (): McpServer => {
+const createServer = (): McpServer => {
   const server = new McpServer({
     name: SERVER_NAME,
     version: SERVER_VERSION,
@@ -200,87 +202,137 @@ const getServer = (): McpServer => {
 const app = express();
 app.use(express.json());
 
-// セッションごとのトランスポートを保存するマップ
-const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
+// StreamableHTTPServerTransportのインスタンス
+let transport: StreamableHTTPServerTransport | null = null;
 
 /**
- * 既存のセッションのリクエストを処理する
- * @param req リクエストオブジェクト
- * @param res レスポンスオブジェクト
- * @param sessionId セッション ID
+ * MCP トランスポートを初期化する
  */
-const handleExistingSession = async (
-  req: express.Request,
-  res: express.Response,
-  sessionId: string
-): Promise<void> => {
-  const transport = transports[sessionId];
-  await transport.handleRequest(req, res, req.body);
-};
+const initializeTransport = (): void => {
+  if (transport) {
+    console.log('⚠️  トランスポートは既に初期化済みです');
+    return; // 既に初期化済み
+  }
 
-/**
- * 新規セッションの初期化リクエストを処理する
- * @param req リクエストオブジェクト
- * @param res レスポンスオブジェクト
- */
-const handleNewSession = async (req: express.Request, res: express.Response): Promise<void> => {
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: (): string => randomUUID(),
-    enableJsonResponse: true, // JSON レスポンスを有効にして、セッション ID をヘッダーに含める
+  console.log('🔧 StreamableHTTPServerTransport を作成中...');
+  
+  transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: (): string => {
+      const sessionId = randomUUID();
+      console.log(`🆔 新しいセッションID生成: ${sessionId}`);
+      return sessionId;
+    },
+    // 初期化リクエストはJSONレスポンス、その後はSSEストリーム
+    enableJsonResponse: true,
     onsessioninitialized: (sessionId: string): void => {
-      console.log(`セッション初期化: ${sessionId}`);
-      transports[sessionId] = transport;
+      console.log(`✅ セッション初期化完了: ${sessionId}`);
     },
   });
 
-  // トランスポートを MCP Server に接続
-  const server = getServer();
-  mcpServerInstance = server; // インスタンスを保存
-  await server.connect(transport);
-  await transport.handleRequest(req, res, req.body);
+  console.log('🔗 MCPサーバーを作成してトランスポートに接続中...');
+  
+  // MCPサーバーを作成してトランスポートに接続
+  mcpServer = createServer();
+  mcpServer.connect(transport);
+  
+  console.log('✅ MCP トランスポートが初期化されました');
 };
 
 /**
- * 無効なリクエストを処理する
- * @param res レスポンスオブジェクト
+ * トランスポートをリセットする（テスト用）
  */
-const handleInvalidRequest = (res: express.Response): void => {
-  res.status(400).json({
-    jsonrpc: '2.0',
-    error: {
-      code: -32000,
-      message: '有効なセッション ID が提供されていません',
-    },
-    id: null,
-  });
-};
-
-/**
- * MCP POST エンドポイントのハンドラ
- * @param req リクエストオブジェクト
- * @param res レスポンスオブジェクト
- */
-const mcpPostHandler = async (req: express.Request, res: express.Response): Promise<void> => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  console.log(
-    sessionId ? `セッション ${sessionId} からのリクエスト:` : '新規リクエスト:',
-    req.body
-  );
-
-  try {
-    if (sessionId && transports[sessionId]) {
-      // 既存のトランスポートを再利用
-      await handleExistingSession(req, res, sessionId);
-    } else if (!sessionId && isInitializeRequest(req.body)) {
-      // 新規初期化リクエスト
-      await handleNewSession(req, res);
-    } else {
-      // 無効なリクエスト
-      handleInvalidRequest(res);
+const resetTransport = async (): Promise<void> => {
+  if (transport) {
+    console.log('🔄 既存のトランスポートをリセット中...');
+    try {
+      await transport.close();
+    } catch (error) {
+      console.error('トランスポート終了エラー:', error);
     }
+    transport = null;
+    mcpServer = null;
+    console.log('✅ トランスポートリセット完了');
+  }
+};
+
+// MCP エンドポイント - SDKに完全委譲
+app.all('/mcp', async (req: express.Request, res: express.Response) => {
+  // セッションIDをヘッダーまたはクエリパラメータから取得
+  const sessionId = (req.headers['mcp-session-id'] as string | undefined) || 
+                   (req.query['mcp-session-id'] as string | undefined);
+  const acceptHeader = req.headers['accept'] as string | undefined;
+  const isSSERequest = acceptHeader?.includes('text/event-stream');
+  
+  console.log(`\n=== ${req.method} /mcp リクエスト ===`);
+  console.log('セッション:', sessionId || '新規');
+  console.log('SSEリクエスト:', isSSERequest ? 'はい' : 'いいえ');
+  console.log('Accept:', acceptHeader);
+  console.log('Content-Type:', req.headers['content-type']);
+  console.log('MCP Protocol Version:', req.headers['mcp-protocol-version'] || req.query['mcp-protocol-version']);
+  console.log('クエリパラメータ:', JSON.stringify(req.query, null, 2));
+  console.log('ボディ:', JSON.stringify(req.body, null, 2));
+  
+  // レスポンスの詳細をログ出力するためのフック
+  const originalWrite = res.write.bind(res);
+  const originalEnd = res.end.bind(res);
+  let responseData = '';
+  
+  res.write = function(chunk: any, encoding?: any, callback?: any) {
+    if (chunk) {
+      responseData += chunk.toString();
+    }
+    return originalWrite(chunk, encoding, callback);
+  };
+  
+  res.end = function(chunk?: any, encoding?: any, callback?: any) {
+    if (chunk) {
+      responseData += chunk.toString();
+    }
+    
+    console.log('\n📤 レスポンス詳細:');
+    console.log('ステータス:', res.statusCode);
+    console.log('ヘッダー:', JSON.stringify(res.getHeaders(), null, 2));
+    
+    if (isSSERequest) {
+      console.log('SSEデータ（最初の500文字）:', responseData.substring(0, 500));
+      if (responseData.length > 500) {
+        console.log('... (データが長いため省略)');
+      }
+    } else {
+      console.log('レスポンスボディ:', responseData);
+    }
+    
+    return originalEnd(chunk, encoding, callback);
+  };
+  
+  try {
+    // トランスポートが初期化されていない場合は初期化
+    if (!transport) {
+      console.log('🔧 トランスポートを初期化中...');
+      initializeTransport();
+    }
+
+    // クエリパラメータからヘッダーに値を設定（EventSource対応）
+    if (req.query['mcp-session-id'] && !req.headers['mcp-session-id']) {
+      req.headers['mcp-session-id'] = req.query['mcp-session-id'] as string;
+      console.log('📝 クエリパラメータからセッションIDをヘッダーに設定:', req.headers['mcp-session-id']);
+    }
+    if (req.query['mcp-protocol-version'] && !req.headers['mcp-protocol-version']) {
+      req.headers['mcp-protocol-version'] = req.query['mcp-protocol-version'] as string;
+      console.log('📝 クエリパラメータからプロトコルバージョンをヘッダーに設定:', req.headers['mcp-protocol-version']);
+    }
+
+    console.log('📤 SDKトランスポートにリクエストを委譲');
+    
+    // すべてのリクエストをSDKのトランスポートに委譲
+    await transport!.handleRequest(req, res, req.body);
+    
+    console.log('✅ リクエスト処理完了');
+    
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : '不明なエラー';
-    console.error('MCPリクエスト処理エラー:', errorMessage);
+    console.error('❌ MCPリクエスト処理エラー:', errorMessage);
+    console.error('エラースタック:', error instanceof Error ? error.stack : 'スタック情報なし');
 
     if (!res.headersSent) {
       res.status(500).json({
@@ -288,16 +340,13 @@ const mcpPostHandler = async (req: express.Request, res: express.Response): Prom
         error: {
           code: -32603,
           message: '内部 Server エラー',
-          data: errorMessage, // エラー詳細を追加
+          data: errorMessage,
         },
         id: null,
       });
     }
   }
-};
-
-// ルートの設定
-app.post('/mcp', mcpPostHandler);
+});
 
 /**
  * ツール説明を変更するエンドポイント
@@ -315,9 +364,14 @@ app.post('/change-description', (req: express.Request, res: express.Response): v
     `新しい説明: ${toolDescriptions[currentToolDescriptionVersion as keyof typeof toolDescriptions]}`
   );
 
-  // MCP Server インスタンスがある場合、listChanged イベントを送信
-  if (mcpServerInstance) {
-    mcpServerInstance.sendToolListChanged();
+  // MCPサーバーに listChanged 通知を送信
+  if (mcpServer) {
+    try {
+      mcpServer.sendToolListChanged();
+      console.log(`[通知送信] tools/list_changed 通知を送信しました`);
+    } catch (error) {
+      console.error(`[通知エラー] 通知送信に失敗:`, error);
+    }
   }
 
   res.json({
@@ -354,40 +408,26 @@ app.get('/tool-status', (req: express.Request, res: express.Response): void => {
 });
 
 /**
- * SSE ストリーム用の GET ハンドラ
+ * トランスポートをリセットするエンドポイント（テスト用）
  */
-app.get('/mcp', async (req: express.Request, res: express.Response) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  if (!sessionId || !transports[sessionId]) {
-    res.status(400).send('無効または欠落しているセッション ID');
-    return;
-  }
-
-  console.log(`セッション ${sessionId} の SSE ストリームを確立`);
-  const transport = transports[sessionId];
-  await transport.handleRequest(req, res);
-});
-
-/**
- * セッション終了用の DELETE ハンドラ
- */
-app.delete('/mcp', async (req: express.Request, res: express.Response) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  if (!sessionId || !transports[sessionId]) {
-    res.status(400).send('無効または欠落しているセッション ID');
-    return;
-  }
-
-  console.log(`セッション ${sessionId} の終了リクエストを受信`);
+app.post('/reset-transport', async (req: express.Request, res: express.Response): Promise<void> => {
+  console.log('\n🔄 トランスポートリセットリクエストを受信');
+  
   try {
-    const transport = transports[sessionId];
-    await transport.handleRequest(req, res);
-  } catch (error: unknown) {
+    await resetTransport();
+    res.json({
+      success: true,
+      message: 'トランスポートがリセットされました。新しいセッションを開始できます。',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
     const errorMessage = error instanceof Error ? error.message : '不明なエラー';
-    console.error('セッション終了処理エラー:', errorMessage);
-    if (!res.headersSent) {
-      res.status(500).send('セッション終了処理エラー');
-    }
+    console.error('トランスポートリセットエラー:', errorMessage);
+    res.status(500).json({
+      success: false,
+      error: errorMessage,
+      timestamp: new Date().toISOString(),
+    });
   }
 });
 
@@ -406,16 +446,17 @@ export function startServer(): void {
    */
   process.on('SIGINT', async (): Promise<void> => {
     console.log('Server をシャットダウンしています...');
-    for (const sessionId in transports) {
+    
+    if (transport) {
       try {
-        console.log(`セッション ${sessionId} のトランスポートを閉じています`);
-        await transports[sessionId].close();
-        delete transports[sessionId];
+        console.log('トランスポートを閉じています');
+        await transport.close();
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : '不明なエラー';
-        console.error(`セッション ${sessionId} のトランスポート終了エラー:`, errorMessage);
+        console.error('トランスポート終了エラー:', errorMessage);
       }
     }
+    
     console.log('Server シャットダウン完了');
     process.exit(0);
   });
