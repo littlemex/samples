@@ -1,0 +1,21 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "BedrockAgentCoreFullAccess",
+            "Effect": "Allow",
+            "Action": [
+                "bedrock-agentcore:*"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "BedrockFullAccess",
+            "Effect": "Allow",
+            "Action": [
+                "bedrock:*"
+            ],
+            "Resource": "*"
+        }
+    ]
+}

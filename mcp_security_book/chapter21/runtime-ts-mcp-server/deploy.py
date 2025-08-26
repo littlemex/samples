@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
-MCP Server デプロイメントスクリプト
+MCP Server デプロイメントスクリプト（ロール自動更新対応版）
+
 Amazon Bedrock AgentCore 上に TypeScript MCP Server をデプロイするための自動化スクリプト
 
 使用方法:
-    python deploy_mcp_server.py --step1  # Cognito 設定
-    python deploy_mcp_server.py --step2  # IAM ロール作成
-    python deploy_mcp_server.py --step5  # 設定保存
-    python deploy_mcp_server.py --all    # 全ステップ実行
+python deploy.py --step1  # Cognito 設定
+python deploy.py --step2  # IAM ロール作成/更新
+python deploy.py --step5  # 設定保存
+python deploy.py --all    # 全ステップ実行
 """
 
 import argparse
 import sys
 import os
+import time
 import json
 import subprocess
 from pathlib import Path
@@ -23,17 +25,16 @@ current_dir = Path(__file__).parent.absolute()
 sys.path.insert(0, str(current_dir))
 
 try:
-    from utils import create_agentcore_role, setup_cognito_user_pool
+    from utils import create_agentcore_role, update_agentcore_role, setup_cognito_user_pool, reauthenticate_user
     import boto3
     from boto3.session import Session
 except ImportError as e:
     print(f"エラー: 必要なモジュールがインポートできません: {e}")
     print("boto3 と utils.py が利用可能か確認してください。")
     sys.exit(1)
-
-
 class MCPServerDeployer:
-    """MCP Server デプロイメント管理クラス"""
+    """MCP Server デ
+プロイメント管理クラス（ロール自動更新対応）"""
     
     def __init__(self):
         # 環境変数からAWS設定を取得
@@ -57,19 +58,59 @@ class MCPServerDeployer:
         
         self.config_file = current_dir / "deployment_config.json"
         self.config = self.load_config()
-        
+
     def load_config(self):
         """保存された設定を読み込む"""
         if self.config_file.exists():
             with open(self.config_file, 'r') as f:
                 return json.load(f)
         return {}
-    
+
     def save_config(self):
         """設定をファイルに保存"""
         with open(self.config_file, 'w') as f:
             json.dump(self.config, f, indent=2)
-    
+
+    def update_token(self):
+        """トークンのみを更新する"""
+        print("\n=== トークン更新 ===")
+        print("既存のCognitoユーザーを再認証して新しいトークンを取得中...")
+        
+        try:
+            # 既存の設定からclient_idを取得
+            if 'cognito' not in self.config or 'client_id' not in self.config['cognito']:
+                print("❌ エラー: Cognito設定が見つかりません。先にステップ1を実行してください。")
+                return False
+            
+            client_id = self.config['cognito']['client_id']
+            print(f"  Client ID: {client_id}")
+            
+            # reauthenticate_user関数を呼び出して新しいトークンを取得
+            bearer_token = reauthenticate_user(client_id)
+            
+            if not bearer_token:
+                print("❌ トークン更新に失敗しました。")
+                return False
+            
+            # 設定を更新
+            self.config['cognito']['bearer_token'] = bearer_token
+            self.save_config()
+            
+            print("✓ トークン更新完了")
+            print("  新しいトークンが生成され、設定に保存されました。")
+            
+            # トークン更新後にstep5を実行して設定を保存
+            print("\n自動的にステップ5を実行して設定を保存します...")
+            self.step5_save_configuration()
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ トークン更新エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     def step1_setup_cognito(self):
         """ステップ 1: Amazon Cognito ユーザープールの設定"""
         print("\n=== ステップ 1: Amazon Cognito 設定 ===")
@@ -78,7 +119,7 @@ class MCPServerDeployer:
         try:
             cognito_config = setup_cognito_user_pool()
             print("✓ Cognito 設定完了")
-            print(f"  ユーザープール ID: {cognito_config.get('user_pool_id', 'N/A')}")
+            print(f"  ユーザープール ID: {cognito_config.get('pool_id', 'N/A')}")
             print(f"  Client ID: {cognito_config.get('client_id', 'N/A')}")
             print(f"  Discovery URL: {cognito_config.get('discovery_url', 'N/A')}")
             
@@ -87,20 +128,22 @@ class MCPServerDeployer:
             self.save_config()
             
             return True
+            
         except Exception as e:
             print(f"❌ Cognito 設定エラー: {e}")
             return False
-    
+
     def step2_create_iam_role(self):
-        """ステップ 2: IAM 実行ロールの作成"""
-        print("\n=== ステップ 2: IAM ロール作成 ===")
-        
+        """ステップ 2: IAM 実行ロールの作成/更新（自動処理）"""
+        print("\n=== ステップ 2: IAM ロール作成/更新 ===")
         tool_name = "mcp_server_ac"
-        print(f"{tool_name} 用の IAM ロールを作成中...")
+        print(f"{tool_name} 用の IAM ロールを作成/更新中...")
         
         try:
-            agentcore_iam_role = create_agentcore_role(agent_name=tool_name)
-            print("✓ IAM ロール作成完了")
+            # 新しい update_agentcore_role 関数を使用
+            agentcore_iam_role = update_agentcore_role(agent_name=tool_name)
+            
+            print("✓ IAM ロール処理完了")
             print(f"  ロール ARN: {agentcore_iam_role['Role']['Arn']}")
             
             # 設定を保存
@@ -111,10 +154,13 @@ class MCPServerDeployer:
             self.save_config()
             
             return True
+            
         except Exception as e:
-            print(f"❌ IAM ロール作成エラー: {e}")
+            print(f"❌ IAM ロール処理エラー: {e}")
+            import traceback
+            traceback.print_exc()
             return False
-    
+
     def step3_local_development(self):
         """ステップ 3: ローカル開発環境のセットアップ（情報表示のみ）"""
         print("\n=== ステップ 3: MCP Server の作成 ===")
@@ -125,8 +171,9 @@ class MCPServerDeployer:
         print("   PORT=13000 npm run start")
         print("\n3. MCP インスペクターでのテスト(ローカル PC で実行):")
         print("   npx @modelcontextprotocol/inspector")
+        
         return True
-    
+
     def step4_docker_deployment(self):
         """ステップ 4: Docker デプロイメント（自動実行）"""
         print("\n=== ステップ 4: Docker 経由での MCP Server デプロイメント ===")
@@ -145,6 +192,7 @@ class MCPServerDeployer:
             # 1. ECR リポジトリの作成
             print("\n1. ECR リポジトリの作成...")
             ecr_client = boto3.client('ecr', region_name=self.region)
+            
             try:
                 response = ecr_client.create_repository(
                     repositoryName=repository_name,
@@ -159,6 +207,7 @@ class MCPServerDeployer:
             print("\n2. ECR へのログイン...")
             login_cmd = f"aws ecr get-login-password --region {self.region} | docker login --username AWS --password-stdin {ecr_uri}"
             result = subprocess.run(login_cmd, shell=True, capture_output=True, text=True)
+            
             if result.returncode == 0:
                 print("✓ ECR へのログインに成功しました")
             else:
@@ -197,39 +246,95 @@ class MCPServerDeployer:
             }
             self.save_config()
             
-            # 4. デプロイ手順の表示
-            print("\n4. Bedrock AgentCore へのデプロイ:")
-            print("   以下の情報を使用して AWS コンソールでデプロイを完了してください：")
-            print("\n   ① AWS コンソール → Bedrock → AgentCore → エージェントの作成")
-            print("   ② プロトコル: MCP を選択")
-            print("   ③ エージェントランタイムの設定:")
-            print(f"      - イメージ URI: {image_uri}")
+            # 4. AgentCore Runtime へのデプロイ
+            print("\n4. Bedrock AgentCore Runtime へのデプロイ...")
             
-            if 'cognito' in self.config:
-                print(f"      - Discovery URL: {self.config['cognito'].get('discovery_url', 'N/A')}")
-                print(f"      - Client ID: {self.config['cognito'].get('client_id', 'N/A')}")
+            # 必要な設定の確認
+            if 'iam_role' not in self.config:
+                print("❌ エラー: IAM ロールが設定されていません。先にステップ 2 を実行してください。")
+                return False
             
-            if 'iam_role' in self.config:
-                print(f"      - 実行ロール: {self.config['iam_role'].get('role_arn', 'N/A')}")
-            
-            print("\n⚠️  重要: デプロイ完了後、エージェント ARN をメモしてください。")
-            print("   次のコマンドでステップ 5 を実行する際に必要です：")
-            print(f"   python {Path(__file__).name} --step5 --agent-arn <YOUR_AGENT_ARN>")
-            
-            return True
-            
+            try:
+                # AgentCore Control クライアントを作成
+                agentcore_client = boto3.client('bedrock-agentcore-control', region_name=self.region)
+                
+                # エージェント名を生成（既存のものと重複しないように）
+                import time
+                agent_name = f"mcp_server_ac_{int(time.time())}"
+                
+                print(f"  エージェント名: {agent_name}")
+                print(f"  イメージ URI: {image_uri}")
+                print(f"  IAM ロール: {self.config['iam_role']['role_arn']}")
+                
+                # AgentCore Runtime を作成
+                response = agentcore_client.create_agent_runtime(
+                    agentRuntimeName=agent_name,
+                    agentRuntimeArtifact={
+                        'containerConfiguration': {
+                            'containerUri': image_uri
+                        }
+                    },
+                    networkConfiguration={"networkMode": "PUBLIC"},
+                    roleArn=self.config['iam_role']['role_arn'],
+                    protocolConfiguration={
+                        'serverProtocol': 'MCP'  # MCPプロトコルを明示的に指定
+                    }
+                )
+                
+                agent_arn = response['agentRuntimeArn']
+                status = response['status']
+                
+                print(f"\n✓ AgentCore Runtime が正常に作成されました！")
+                print(f"  エージェント ARN: {agent_arn}")
+                print(f"  ステータス: {status}")
+                
+                # 設定を保存
+                self.config['agent_runtime'] = {
+                    'agent_name': agent_name,
+                    'agent_arn': agent_arn,
+                    'status': status,
+                    'created_at': time.strftime('%Y-%m-%d %H:%M:%S')
+                }
+                self.save_config()
+                
+                # Cognito 設定がある場合は表示
+                if 'cognito' in self.config:
+                    print("\n  Cognito 設定:")
+                    print(f"    - Discovery URL: {self.config['cognito'].get('discovery_url', 'N/A')}")
+                    print(f"    - Client ID: {self.config['cognito'].get('client_id', 'N/A')}")
+                
+                print("\n✅ ステップ 4 が完了しました。")
+                print("   エージェント ARN は自動的に保存されました。")
+                print("   次のステップ 5 では、この ARN を使用して設定を完了します。")
+                
+                return True
+                
+            except Exception as e:
+                print(f"❌ AgentCore Runtime デプロイエラー: {e}")
+                print("\n詳細なエラー情報:")
+                import traceback
+                traceback.print_exc()
+                return False
+                
         except Exception as e:
             print(f"❌ Docker デプロイメントエラー: {e}")
             return False
-    
+
     def step5_save_configuration(self, agent_arn=None):
         """ステップ 5: リモートアクセス用の設定保存"""
         print("\n=== ステップ 5: 設定の保存 ===")
         
+        # agent_arnが指定されていない場合、保存された設定から取得
         if not agent_arn:
-            print("❌ エラー: エージェント ARN が指定されていません。")
-            print("使用方法: python deploy_mcp_server.py --step5 --agent-arn <YOUR_AGENT_ARN>")
-            return False
+            if 'agent_runtime' in self.config and 'agent_arn' in self.config['agent_runtime']:
+                agent_arn = self.config['agent_runtime']['agent_arn']
+                print(f"✓ 保存された設定から Agent ARN を取得しました: {agent_arn}")
+            else:
+                print("❌ エラー: エージェント ARN が見つかりません。")
+                print("   先にステップ 4 を実行してエージェントをデプロイするか、")
+                print("   --agent-arn オプションで手動指定してください。")
+                print("   使用方法: python deploy.py --step5 --agent-arn <YOUR_AGENT_ARN>")
+                return False
         
         if 'cognito' not in self.config:
             print("❌ エラー: Cognito 設定が見つかりません。先にステップ 1 を実行してください。")
@@ -241,6 +346,7 @@ class MCPServerDeployer:
         try:
             # Cognito 認証情報を Secrets Manager に保存
             secret_name = 'mcp_server/cognito/credentials'
+            
             try:
                 secrets_client.create_secret(
                     Name=secret_name,
@@ -264,6 +370,7 @@ class MCPServerDeployer:
                 Description='MCP Server 用のエージェント ARN',
                 Overwrite=True
             )
+            
             print(f"✓ エージェント ARN を Parameter Store に保存しました")
             print(f"  パラメータ名: {param_name}")
             print(f"  値: {agent_arn}")
@@ -272,21 +379,72 @@ class MCPServerDeployer:
             self.config['agent_arn'] = agent_arn
             self.save_config()
             
+            print("\n✅ ステップ 5 が完了しました。")
+            print("   リモートアクセス用の設定がすべて保存されました。")
+            
             return True
+            
         except Exception as e:
             print(f"❌ 設定保存エラー: {e}")
             return False
-    
+
     def step6_test_connection(self):
         """ステップ 6: 接続テスト"""
         print("\n=== ステップ 6: 接続テスト ===")
-        print("以下のコマンドで接続をテストできます：")
-        print("\n基本的な接続テスト:")
-        print("  python my_mcp_client_remote.py")
-        print("\nツール呼び出しテスト:")
-        print("  python invoke_mcp_tools.py")
-        return True
-    
+        
+        # Agent ARNを取得
+        if 'agent_runtime' in self.config and 'agent_arn' in self.config['agent_runtime']:
+            agent_arn = self.config['agent_runtime']['agent_arn']
+        elif 'agent_arn' in self.config:
+            agent_arn = self.config['agent_arn']
+        else:
+            print("❌ エラー: エージェント ARN が見つかりません。")
+            return False
+        
+        # 認証テストを実行
+        try:
+            from utils import test_agentcore_authentication, get_detailed_curl_command, install_awscurl
+            
+            # awscurlがない場合はインストールを提案
+            try:
+                import subprocess
+                subprocess.run(['awscurl', '--version'], capture_output=True, timeout=5)
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                print("⚠️  awscurl が見つかりません。SigV4テストのためにインストールしますか？ (y/n)")
+                # 自動でインストール
+                install_awscurl()
+            
+            # 認証テストを実行
+            test_result = test_agentcore_authentication(agent_arn, self.region)
+            
+            # 推奨されるcurlコマンドを表示
+            print("\n📋 推奨されるcurlコマンド:")
+            if test_result['oauth_success']:
+                oauth_cmd = get_detailed_curl_command(agent_arn, self.region, 'oauth')
+                print("\n🔐 OAuth Bearer Token版:")
+                print(oauth_cmd)
+            
+            if test_result['sigv4_success'] or test_result['awscurl_success']:
+                sigv4_cmd = get_detailed_curl_command(agent_arn, self.region, 'sigv4')
+                print("\n🔐 SigV4版:")
+                print(sigv4_cmd)
+            
+            # 推奨クライアントを表示
+            print("\n🚀 推奨クライアント:")
+            if test_result['oauth_success']:
+                print("  python simple_protocol_debug_client.py --region us-east-1")
+            if test_result['sigv4_success']:
+                print("  python sigv4_mcp_client.py")
+            
+            return test_result['oauth_success'] or test_result['sigv4_success']
+            
+        except Exception as e:
+            print(f"❌ 接続テストエラー: {e}")
+            print("\n手動テスト用コマンド:")
+            print("  python simple_protocol_debug_client.py --region us-east-1")
+            print("  python sigv4_mcp_client.py")
+            return False
+
     def run_all_steps(self, agent_arn=None):
         """全ステップを順番に実行"""
         print("=== 全ステップを実行します ===")
@@ -296,7 +454,7 @@ class MCPServerDeployer:
             print("ステップ 1 で失敗しました。")
             return False
         
-        # ステップ 2
+        # ステップ 2（自動更新対応）
         if not self.step2_create_iam_role():
             print("ステップ 2 で失敗しました。")
             return False
@@ -309,29 +467,132 @@ class MCPServerDeployer:
             print("ステップ 4 で失敗しました。")
             return False
         
-        # ステップ 5（agent_arn が指定されている場合のみ）
-        if agent_arn:
-            if not self.step5_save_configuration(agent_arn):
-                print("ステップ 5 で失敗しました。")
-                return False
-        else:
-            print("\n⚠️  注意: エージェント ARN が指定されていないため、ステップ 5 はスキップされました。")
-            print("デプロイ後に以下のコマンドを実行してください：")
-            print("python deploy_mcp_server.py --step5 --agent-arn <YOUR_AGENT_ARN>")
+        # ステップ 5（自動実行 - step4で作成されたagent_arnを使用）
+        if not self.step5_save_configuration(agent_arn):
+            print("ステップ 5 で失敗しました。")
+            return False
         
         # ステップ 6（情報表示のみ）
         self.step6_test_connection()
         
-        print("\n✅ 処理が完了しました！")
+        print("\n✅ 全ステップが完了しました！")
+        print("   MCP Server が Amazon Bedrock AgentCore に正常にデプロイされました。")
+        print("   IAM ロールは最新の bedrock-agentcore 権限で自動更新されました。")
+        
         return True
-    
+
+    def check_agent_status(self):
+        """デプロイされたエージェントのステータスを確認"""
+        print("\n=== エージェントステータス確認 ===")
+        
+        # deployment_config.jsonから設定を確認
+        if 'agent_runtime' not in self.config:
+            print("❌ エラー: エージェント情報が見つかりません。")
+            print("   先にステップ 4 でエージェントをデプロイしてください。")
+            return False
+        
+        agent_info = self.config['agent_runtime']
+        agent_arn = agent_info.get('agent_arn')
+        agent_name = agent_info.get('agent_name')
+        
+        if not agent_arn:
+            print("❌ エラー: エージェント ARN が見つかりません。")
+            return False
+        
+        # ARN から Runtime ID を抽出
+        # ARN形式: arn:aws:bedrock-agentcore:region:account:runtime/runtime-id
+        try:
+            agent_runtime_id = agent_arn.split('/')[-1]
+        except Exception as e:
+            print(f"❌ エラー: ARN からランタイム ID を抽出できません: {e}")
+            return False
+        
+        print(f"エージェント名: {agent_name}")
+        print(f"エージェント ARN: {agent_arn}")
+        print(f"ランタイム ID: {agent_runtime_id}")
+        print(f"作成日時: {agent_info.get('created_at', 'N/A')}")
+        
+        try:
+            # 正しいクライアント名を使用（公式ドキュメントに基づく）
+            agentcore_client = boto3.client('bedrock-agentcore-control', region_name=self.region)
+            
+            print("\nエージェントステータスを取得中...")
+            
+            # 正しいパラメータでAPIを呼び出し
+            response = agentcore_client.get_agent_runtime(
+                agentRuntimeId=agent_runtime_id
+            )
+            
+            # ステータス情報を表示
+            status = response.get('status', 'UNKNOWN')
+            created_at = response.get('createdAt', 'N/A')
+            updated_at = response.get('lastUpdatedAt', 'N/A')
+            
+            print(f"\n✓ エージェントステータス取得完了:")
+            print(f"  ステータス: {status}")
+            print(f"  作成日時: {created_at}")
+            print(f"  更新日時: {updated_at}")
+            
+            # ステータスに応じたメッセージを表示
+            if status == 'READY':
+                print("  🟢 エージェントは正常に動作しています")
+            elif status == 'CREATING':
+                print("  🟡 エージェントは作成中です")
+            elif status == 'CREATE_FAILED':
+                print("  🔴 エージェントの作成に失敗しました")
+            elif status == 'UPDATING':
+                print("  🟡 エージェントは更新中です")
+            elif status == 'UPDATE_FAILED':
+                print("  🔴 エージェントの更新に失敗しました")
+            elif status == 'DELETING':
+                print("  🟡 エージェントは削除中です")
+            else:
+                print(f"  ⚪ 不明なステータス: {status}")
+            
+            # 追加情報があれば表示
+            if 'agentRuntimeName' in response:
+                print(f"  エージェント名: {response['agentRuntimeName']}")
+            if 'description' in response:
+                print(f"  説明: {response['description']}")
+            if 'agentRuntimeArtifact' in response:
+                artifact = response['agentRuntimeArtifact']
+                if 'containerConfiguration' in artifact:
+                    container_uri = artifact['containerConfiguration'].get('containerUri', 'N/A')
+                    print(f"  コンテナ URI: {container_uri}")
+            if 'networkConfiguration' in response:
+                network_mode = response['networkConfiguration'].get('networkMode', 'N/A')
+                print(f"  ネットワークモード: {network_mode}")
+            if 'roleArn' in response:
+                print(f"  IAM ロール: {response['roleArn']}")
+            if 'protocolConfiguration' in response:
+                protocol = response['protocolConfiguration'].get('serverProtocol', 'N/A')
+                print(f"  プロトコル: {protocol}")
+            
+            # 設定ファイルのステータスを更新
+            self.config['agent_runtime']['last_status_check'] = {
+                'status': status,
+                'checked_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'created_at': str(created_at),
+                'updated_at': str(updated_at)
+            }
+            self.save_config()
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ エージェントステータス取得エラー: {e}")
+            print("\n詳細なエラー情報:")
+            import traceback
+            traceback.print_exc()
+            return False
+
     def show_status(self):
         """現在の設定状態を表示"""
         print("\n=== 現在の設定状態 ===")
         
         if 'cognito' in self.config:
             print("\n✓ Cognito 設定:")
-            print(f"  ユーザープール ID: {self.config['cognito'].get('user_pool_id', 'N/A')}")
+            print(f"  ユーザープール ID: {self.config['cognito'].get('pool_id', 'N/A')}")
             print(f"  Client ID: {self.config['cognito'].get('client_id', 'N/A')}")
         else:
             print("\n❌ Cognito 設定: 未設定")
@@ -350,6 +611,21 @@ class MCPServerDeployer:
         else:
             print("\n❌ Docker 設定: 未設定")
         
+        if 'agent_runtime' in self.config:
+            print("\n✓ エージェント Runtime:")
+            agent_info = self.config['agent_runtime']
+            print(f"  エージェント名: {agent_info.get('agent_name', 'N/A')}")
+            print(f"  エージェント ARN: {agent_info.get('agent_arn', 'N/A')}")
+            print(f"  作成日時: {agent_info.get('created_at', 'N/A')}")
+            
+            # 最後のステータスチェック結果があれば表示
+            if 'last_status_check' in agent_info:
+                status_info = agent_info['last_status_check']
+                print(f"  最新ステータス: {status_info.get('status', 'N/A')}")
+                print(f"  最終確認日時: {status_info.get('checked_at', 'N/A')}")
+        else:
+            print("\n❌ エージェント Runtime: 未デプロイ")
+        
         if 'agent_arn' in self.config:
             print(f"\n✓ エージェント ARN: {self.config['agent_arn']}")
         else:
@@ -366,42 +642,36 @@ def main():
         print("⚠️  .env ファイルが見つかりません。環境変数は既存の設定を使用します。")
     
     parser = argparse.ArgumentParser(
-        description='MCP Server を Amazon Bedrock AgentCore にデプロイするための自動化スクリプト',
+        description='MCP Server を Amazon Bedrock AgentCore にデプロイするための自動化スクリプト（ロール自動更新対応）',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-使用例:
-  uv run deploy.py --step1              # Cognito 設定
-  uv run deploy.py --step2              # IAM ロール作成
-  uv run deploy.py --step3              # ローカル開発手順を表示
-  uv run deploy.py --step4              # Docker ビルドと ECR プッシュ（自動実行）
-  uv run deploy.py --step5 --agent-arn arn:aws:...  # 設定保存
-  uv run deploy.py --step6              # テスト手順を表示
-  uv run deploy.py --all                # 全ステップ実行
-  uv run deploy.py --status             # 現在の設定状態を表示
-        """
-    )
+        epilog="""使用例:
+uv run deploy.py --step1              # Cognito 設定
+uv run deploy.py --step2              # IAM ロール作成/更新（自動処理）
+uv run deploy.py --step3              # ローカル開発手順を表示
+uv run deploy.py --step4              # Docker ビルドと ECR プッシュ（自動実行）
+uv run deploy.py --step5 --agent-arn arn:aws:...  # 設定保存
+uv run deploy.py --step6              # テスト手順を表示
+uv run deploy.py --all                # 全ステップ実行
+uv run deploy.py --status             # 現在の設定状態を表示
+uv run deploy.py --update-token       # トークンを更新してSecrets Managerに保存
+uv run deploy.py --test-auth          # 認証メソッドテストを実行
+""")
     
     # ステップオプション
-    parser.add_argument('--step1', action='store_true', 
-                       help='ステップ 1: Amazon Cognito ユーザープールの設定')
-    parser.add_argument('--step2', action='store_true', 
-                       help='ステップ 2: IAM 実行ロールの作成')
-    parser.add_argument('--step3', action='store_true', 
-                       help='ステップ 3: ローカル開発手順を表示')
-    parser.add_argument('--step4', action='store_true', 
-                       help='ステップ 4: Docker イメージのビルドと ECR へのプッシュ（自動実行）')
-    parser.add_argument('--step5', action='store_true', 
-                       help='ステップ 5: リモートアクセス用の設定保存')
-    parser.add_argument('--step6', action='store_true', 
-                       help='ステップ 6: 接続テスト手順を表示')
+    parser.add_argument('--step1', action='store_true', help='ステップ 1: Amazon Cognito ユーザープールの設定')
+    parser.add_argument('--step2', action='store_true', help='ステップ 2: IAM 実行ロールの作成/更新（自動処理）')
+    parser.add_argument('--step3', action='store_true', help='ステップ 3: ローカル開発手順を表示')
+    parser.add_argument('--step4', action='store_true', help='ステップ 4: Docker イメージのビルドと ECR へのプッシュ（自動実行）')
+    parser.add_argument('--step5', action='store_true', help='ステップ 5: リモートアクセス用の設定保存')
+    parser.add_argument('--step6', action='store_true', help='ステップ 6: 接続テスト手順を表示')
+    parser.add_argument('--test-auth', action='store_true', help='認証メソッドテストを実行')
     
     # その他のオプション
-    parser.add_argument('--all', action='store_true', 
-                       help='全ステップを順番に実行')
-    parser.add_argument('--status', action='store_true', 
-                       help='現在の設定状態を表示')
-    parser.add_argument('--agent-arn', type=str, 
-                       help='エージェント ARN（ステップ 5 で必要）')
+    parser.add_argument('--all', action='store_true', help='全ステップを順番に実行')
+    parser.add_argument('--status', action='store_true', help='現在の設定状態を表示')
+    parser.add_argument('--check-status', action='store_true', help='デプロイされたエージェントのステータスを確認')
+    parser.add_argument('--update-token', action='store_true', help='トークンのみを更新する')
+    parser.add_argument('--agent-arn', type=str, help='エージェント ARN（ステップ 5 で必要）')
     
     args = parser.parse_args()
     
@@ -416,8 +686,12 @@ def main():
     # 各ステップの実行
     if args.status:
         deployer.show_status()
+    elif args.check_status:
+        deployer.check_agent_status()
     elif args.all:
         deployer.run_all_steps(args.agent_arn)
+    elif args.update_token:
+        deployer.update_token()
     elif args.step1:
         deployer.step1_setup_cognito()
     elif args.step2:
@@ -430,6 +704,28 @@ def main():
         deployer.step5_save_configuration(args.agent_arn)
     elif args.step6:
         deployer.step6_test_connection()
+    elif args.test_auth:
+        # 認証テストのみを実行
+        if 'agent_runtime' in deployer.config and 'agent_arn' in deployer.config['agent_runtime']:
+            agent_arn = deployer.config['agent_runtime']['agent_arn']
+        elif 'agent_arn' in deployer.config:
+            agent_arn = deployer.config['agent_arn']
+        else:
+            print("❌ エラー: エージェント ARN が見つかりません。")
+            return
+        
+        from utils import test_agentcore_authentication, get_detailed_curl_command
+        test_result = test_agentcore_authentication(agent_arn, deployer.region)
+        
+        # 詳細なcurlコマンドを表示
+        print("\n📋 詳細なcurlコマンド:")
+        oauth_cmd = get_detailed_curl_command(agent_arn, deployer.region, 'oauth')
+        sigv4_cmd = get_detailed_curl_command(agent_arn, deployer.region, 'sigv4')
+        
+        print("\n🔐 OAuth Bearer Token版:")
+        print(oauth_cmd)
+        print("\n🔐 SigV4版:")
+        print(sigv4_cmd)
 
 
 if __name__ == "__main__":

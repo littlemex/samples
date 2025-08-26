@@ -1,0 +1,37 @@
+{
+  "name": "direct-agentcore-client",
+  "version": "1.0.0",
+  "description": "AWS Bedrock AgentCoreに直接アクセスするクライアント",
+  "main": "direct_agentcore_client.js",
+  "scripts": {
+    "mcp:build": "tsc sigv4_mcp_client.ts",
+    "mcp:start": "node sigv4_mcp_client.js",
+    "mcp:dev": "ts-node sigv4_mcp_client.ts",
+    "mcp:local": "ts-node sigv4_mcp_client.ts --local",
+    "mcp:remote": "ts-node sigv4_mcp_client.ts --remote",
+    "mcp:local:debug": "ts-node sigv4_mcp_client.ts --local --debug",
+    "mcp:remote:debug": "ts-node sigv4_mcp_client.ts --remote --debug"
+  },
+  "dependencies": {
+    "@aws-crypto/sha256-js": "^5.2.0",
+    "@aws-sdk/client-bedrock-agentcore": "^3.515.0",
+    "@aws-sdk/client-ssm": "^3.873.0",
+    "@aws-sdk/client-sts": "^3.873.0",
+    "@aws-sdk/credential-provider-node": "^3.873.0",
+    "@aws-sdk/node-http-handler": "^3.370.0",
+    "@aws-sdk/signature-v4": "^3.370.0",
+    "@aws-sdk/types": "^3.862.0",
+    "@modelcontextprotocol/sdk": "^1.13.2",
+    "@types/node-fetch": "^2.6.13",
+    "axios": "^1.11.0",
+    "commander": "^11.1.0",
+    "node-fetch": "^3.3.2",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/uuid": "^9.0.7",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
