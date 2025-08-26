@@ -47,3 +47,4 @@ Thumbs.db
 deployment_config.json
 *.js
 dist/
+__pycache__/

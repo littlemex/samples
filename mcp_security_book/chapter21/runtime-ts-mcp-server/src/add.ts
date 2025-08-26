@@ -158,7 +158,11 @@ app.post('/mcp', async (req: Request, res: Response): Promise<void> => {
 
     // トランスポートをラップして詳細なログを記録
     class LoggingStreamableHTTPServerTransport extends StreamableHTTPServerTransport {
-      async handleRequest(req: Request, res: Response, body: Record<string, unknown>): Promise<void> {
+      async handleRequest(
+        req: Request,
+        res: Response,
+        body: Record<string, unknown>
+      ): Promise<void> {
         logToFile('=== LoggingTransport: handleRequest 開始 ===');
         logToFile('リクエストメソッド: ' + req.method);
         logToFile('リクエストURL: ' + req.url);
@@ -235,7 +239,7 @@ app.post('/mcp', async (req: Request, res: Response): Promise<void> => {
         logToFile('=== MCP initialize リクエスト検出 ===');
         logObject('initialize パラメータ', req.body.params);
 
-        // 目立つログ出力（初期化リクエスト）
+        // 初期化リクエスト
         console.log('\n');
         console.log('*******************************************************');
         console.log('*                                                     *');
@@ -244,7 +248,7 @@ app.post('/mcp', async (req: Request, res: Response): Promise<void> => {
         console.log('*******************************************************');
         console.log('\n');
       } else if (req.body.method === 'tools/list') {
-        // 目立つログ出力（ツールリスト取得リクエスト）
+        // ツールリスト取得リクエスト
         console.log('\n');
         console.log('*******************************************************');
         console.log('*                                                     *');
@@ -253,7 +257,7 @@ app.post('/mcp', async (req: Request, res: Response): Promise<void> => {
         console.log('*******************************************************');
         console.log('\n');
       } else if (req.body.method === 'tools/call') {
-        // 目立つログ出力（ツール呼び出しリクエスト）
+        // ツール呼び出しリクエスト
         const toolName = req.body.params?.name || '不明';
         console.log('\n');
         console.log('*******************************************************');
