@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node add.js",
     "test": "node add.test.js",
-    "lint": "eslint .",
+    "lint": "eslint *.ts",
     "format": "npx prettier --write \"**/*.ts\""
   },
   "dependencies": {
