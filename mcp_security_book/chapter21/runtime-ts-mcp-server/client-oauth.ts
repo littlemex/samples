@@ -10,6 +10,24 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import fetch from 'node-fetch';
+import { Command } from 'commander';
+
+// ログレベル設定
+let debugMode = false;
+
+const log = {
+  debug: (message: string, ...args: any[]) => {
+    if (debugMode) {
+      console.log(`[DEBUG] ${message}`, ...args);
+    }
+  },
+  info: (message: string, ...args: any[]) => {
+    console.log(`[INFO] ${message}`, ...args);
+  },
+  error: (message: string, ...args: any[]) => {
+    console.error(`[ERROR] ${message}`, ...args);
+  },
+};
 
 // 現在のディレクトリを使用
 const __dirname = process.cwd();
@@ -87,6 +105,11 @@ class OAuthMCPClient {
     console.log(`🔖 トークン種類: ${this.getTokenType()}`);
     console.log(`🎯 トークン Audience: ${this.getTokenAudience()}`);
     console.log(`⏰ トークン有効期限: ${this.getTokenExpiration()}`);
+    
+    log.debug('OAuth MCP クライアント初期化の詳細情報:');
+    log.debug(`設定ファイルパス: ${fullConfigPath}`);
+    log.debug(`エージェント ARN: ${agentArn}`);
+    log.debug(`リージョン: ${region}`);
   }
 
   /**
@@ -97,8 +120,10 @@ class OAuthMCPClient {
       const token = this.config.cognito.bearer_token;
       const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
       const exp = new Date(payload.exp * 1000);
+      log.debug(`トークン有効期限の詳細: ${payload.exp} (${exp.toISOString()})`);
       return exp.toLocaleString('ja-JP');
     } catch (error) {
+      log.error('トークン有効期限の取得に失敗:', error);
       return '不明';
     }
   }
@@ -110,8 +135,10 @@ class OAuthMCPClient {
     try {
       const token = this.config.cognito.bearer_token;
       const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+      log.debug(`トークンペイロード: ${JSON.stringify(payload, null, 2)}`);
       return payload.token_use || '不明';
     } catch (error) {
+      log.error('トークン種類の取得に失敗:', error);
       return '不明';
     }
   }
@@ -124,12 +151,16 @@ class OAuthMCPClient {
       const token = this.config.cognito.bearer_token;
       const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
       if (typeof payload.aud === 'string') {
+        log.debug(`トークン Audience (文字列): ${payload.aud}`);
         return payload.aud;
       } else if (Array.isArray(payload.aud)) {
+        log.debug(`トークン Audience (配列): ${JSON.stringify(payload.aud)}`);
         return payload.aud.join(', ');
       }
+      log.debug('トークンに Audience が見つかりません');
       return '不明';
     } catch (error) {
+      log.error('トークン Audience の取得に失敗:', error);
       return '不明';
     }
   }
@@ -143,8 +174,11 @@ class OAuthMCPClient {
       const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
       const now = Math.floor(Date.now() / 1000);
       
+      log.debug(`トークン検証: 現在時刻=${now}, 有効期限=${payload.exp}`);
+      
       // 有効期限をチェック
       if (payload.exp <= now) {
+        log.error(`トークンの有効期限が切れています: ${new Date(payload.exp * 1000).toLocaleString('ja-JP')}`);
         return false;
       }
       
@@ -152,10 +186,13 @@ class OAuthMCPClient {
       const tokenType = payload.token_use;
       if (tokenType !== 'access') {
         console.warn(`⚠️ 警告: 現在のトークンは ${tokenType} トークンです。AgentCore Runtime では Access トークンが推奨されています。`);
+        log.debug(`トークン種類の警告: ${tokenType} (推奨: access)`);
       }
       
+      log.debug('トークン検証: 有効なトークンです');
       return true;
     } catch (error) {
+      log.error('トークン検証に失敗:', error);
       return false;
     }
   }
@@ -185,7 +222,12 @@ class OAuthMCPClient {
     } else {
       requestBody = JSON.stringify(mcpRequest);
     }
+    
+    log.debug(`リクエスト本文: ${requestBody}`);
+    log.debug(`リクエストサイズ: ${requestBody.length} バイト`);
 
+    log.debug(`リクエストヘッダー: Authorization: Bearer ${this.config.cognito.bearer_token.substring(0, 10)}...`);
+    
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -197,11 +239,13 @@ class OAuthMCPClient {
     });
 
     console.log(`📥 レスポンス: ${response.status} ${response.statusText}`);
+    log.debug(`レスポンスヘッダー: ${JSON.stringify(Object.fromEntries(response.headers.entries()), null, 2)}`);
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`❌ HTTP エラー: ${response.status}`);
       console.error(`📄 エラー詳細: ${errorText}`);
+      log.debug(`エラーレスポンス全文: ${errorText}`);
       
       if (response.status === 401) {
         throw new Error('認証エラー: JWT トークンが無効または期限切れです');
@@ -211,9 +255,11 @@ class OAuthMCPClient {
     }
 
     const result: MCPResponse = await response.json() as MCPResponse;
+    log.debug(`レスポンス本文: ${JSON.stringify(result, null, 2)}`);
     
     if (result.error) {
       console.error(`❌ MCP エラー: ${result.error.message}`);
+      log.debug(`MCP エラー詳細: ${JSON.stringify(result.error, null, 2)}`);
       throw new Error(`MCP エラー [${result.error.code}]: ${result.error.message}`);
     }
 
@@ -332,6 +378,21 @@ class OAuthMCPClient {
  */
 async function main() {
   try {
+    // コマンドラインオプションを設定
+    const program = new Command();
+    program
+      .description('OAuth JWT 認証を使用した MCP クライアント')
+      .option('--debug', 'デバッグログを有効にする')
+      .parse();
+
+    const options = program.opts();
+    
+    // デバッグモード設定
+    debugMode = options.debug;
+    if (debugMode) {
+      console.log('🐛 デバッグログが有効です');
+    }
+    
     console.log('🌟 OAuth MCP クライアント開始');
     console.log('='.repeat(50));
 

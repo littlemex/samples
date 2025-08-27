@@ -10,6 +10,8 @@
     "mcp:remote": "ts-node client.ts --remote",
     "mcp:local:debug": "ts-node client.ts --local --debug",
     "mcp:remote:debug": "ts-node client.ts --remote --debug",
+    "mcp:remote:oauth": "ts-node client-oauth.ts",
+    "mcp:remote:oauth:debug": "ts-node client-oauth.ts --debug",
     "lint": "eslint \"client.ts\" \"src/**/*.ts\"",
     "lint:fix": "eslint \"client.ts\" \"src/**/*.ts\" --fix",
     "format": "prettier --write \"**/*.ts\"",
