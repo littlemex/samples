@@ -13,6 +13,8 @@
 - MCP Client は Python、TypeScript の両方で提供（どちらも SigV4 認証でアクセス）
 - Python ベースの AgentCore Runtime へのデプロイスクリプトを提供
 
+SigV4 については[こちら](https://aws.amazon.com/jp/builders-flash/202210/way-to-operate-api-2/) がわかりやすいです。pre
+
 ### 理解したいポイント
 
 - [ ] 1. MCP Server のステートレス設定はどうやるのか？
@@ -26,7 +28,7 @@
 
 - **client.ts**: TypeScript 実装の MCP Client です。SigV4 認証を使用して、ローカル MCP Server と Amazon Bedrock AgentCore Runtime の両方にアクセスできます。
 - **client.py**: Python 実装の MCP Client です。client.ts と同様に SigV4 認証でローカルと AgentCore Runtime へのアクセスに対応しています。
-- **deploy.py**: MCP Server を AgentCore Runtime にデプロイするためのスクリプトです。各ステップごとに実行できる機能が提供されています。
+- **deploy.py**: MCP Server を AgentCore Runtime へデプロイするための便利スクリプトです。各ステップごとに実行できる機能が提供されています。
 - **utils.py**: Cognito 設定、IAM ロール作成、認証テストなどの汎用的な機能を提供するユーティリティモジュールです。
 - **deployment_config.json**: deploy.py の実行によって作成されるリソース情報が格納されるファイルです。べき等性を保ちながら更新されます。
 
@@ -56,7 +58,7 @@ AgentCore Runtime には認証が必要です。Runtime の場合、Inbound Auth
 
 Step 1 では、JWT Bearer Token 認証のために Amazon Cognito を設定します。utils.py の `setup_cognito_user_pool` 関数を使用して、Cognito ユーザープールとアプリケーション Client を作成します。作成したリソース情報は deployment_config.json に自動的に保存されます。
 
-ただし、このサンプルでは Client（client.ts と client.py）は SigV4 認証を使用して AgentCore Runtime にアクセスしています。これは AWS 環境内での利便性が高いためです。
+ただし、このサンプルでは Client（client.ts と client.py）は SigV4 認証を使用して AgentCore Runtime にアクセスしています。
 
 ```bash
 # JavaScript SDK は機能不足のため Python を利用したスクリプトでデプロイします
@@ -77,7 +79,7 @@ uv run deploy.py --step1
 
 開始する前に、AgentCore Runtime サービス自体が使用する IAM ロールを作成しましょう。このロールは、Runtime が AWS リソースにアクセスするために必要な権限を提供します。
 
-deploy.py の --step2 オプションを実行すると、utils.py の update_agentcore_role 関数を使用して、Runtime 自体に必要な権限を持つ IAM ロールが作成または更新されます。このロールには、Bedrock サービス、ECR、CloudWatch Logs、X-Ray などへのアクセス権限が含まれています。
+deploy.py の `--step2` オプションを実行すると、utils.py の `update_agentcore_role` 関数を使用して、Runtime 自体に必要な権限を持つ IAM ロールが作成または更新されます。このロールには、Bedrock サービス、ECR、CloudWatch Logs、X-Ray などへのアクセス権限が含まれています。
 
 なお、deploy.py を実行する際に `--put-role-policy` オプションを使用する場合は、deploy.py を実行するユーザー自体に必要な権限を付与するためのものであり、Step 2 で作成するロールとは異なります。Step 2 のロールは、呼び出される側の Runtime が他の AWS サービスにアクセスするために必要なロールです。
 
@@ -103,16 +105,16 @@ PORT=13000 npm run start
 
 スターターツールキットを使用せずに MCP Server をデプロイするための手動手順です。イメージのビルド、Amazon ECR へのプッシュを実施します。
 
-deploy.py の --step4 オプションを実行すると、以下の処理が行われます：
+deploy.py の `--step4` オプションを実行すると、以下の処理が行われます：
 
 1. Amazon ECR リポジトリの作成（存在しない場合）
 2. Docker ビルダーの作成と設定
 3. Docker イメージのビルドと ECR へのプッシュ
 4. AgentCore Runtime の作成と設定
 
-このステップでは、AWS SDK を使用して bedrock-agentcore-control サービスにアクセスし、MCP Server を AgentCore Runtime にデプロイします。デプロイされた Server の ARN は deployment_config.json に保存されます。
+このステップでは、AWS SDK を使用して `bedrock-agentcore-control` サービスにアクセスし、MCP Server を AgentCore Runtime にデプロイします。デプロイされた Server の ARN は deployment_config.json に保存されます。
 
-AgentCore Runtime の作成時に authorizerConfiguration パラメータを指定しないため、デフォルトで SigV4 認証が使用されます。JWT Bearer Token 認証を使用する場合は、authorizerConfiguration パラメータを明示的に指定する必要があります。
+AgentCore Runtime の作成時に `authorizerConfiguration` パラメータを指定しないため、デフォルトで SigV4 認証が使用されます。JWT Bearer Token 認証を使用する場合は、`authorizerConfiguration` パラメータを明示的に指定する必要があります。
 
 ```bash
 uv run deploy.py --step4
@@ -122,7 +124,7 @@ uv run deploy.py --step4
 
 デプロイされた MCP Server を呼び出す前に、エージェント ARN（Step 4 から取得）と Cognito 設定を AWS Systems Manager Parameter Store と AWS Secrets Manager に保存して、簡単に取得できるようにします。
 
-deploy.py の --step5 オプションを実行すると、以下の処理が行われます：
+deploy.py の `--step5` オプションを実行すると、以下の処理が行われます。
 
 1. Cognito 認証情報を AWS Secrets Manager に保存
 2. エージェント ARN を AWS Systems Manager Parameter Store に保存
@@ -133,29 +135,26 @@ deploy.py の --step5 オプションを実行すると、以下の処理が行�
 uv run deploy.py --step5
 ```
 
-## Step 6: リモートテスト Client の作成
-
-次に、デプロイされた MCP Server をテストする Client を作成します。この Client は、AWS から必要な認証情報を取得し、デプロイされた Server に接続します。
+## Step 6: MCP Client の使用
 
 client.ts と client.py は、どちらも同じ機能を提供する MCP Client の実装です。言語の好みに応じて、TypeScript 版または Python 版を選択できます。両方とも SigV4 認証を使用して AgentCore Runtime にアクセスする機能と、認証なしでローカル MCP Server にアクセスする機能を備えています。
-
-Python 版を使用する場合は、必ず uv を利用してください：
 
 ```bash
 uv run client.py --remote  # AgentCore Runtime に接続
 uv run client.py --local   # ローカル Server に接続
 ```
 
-TypeScript 版を使用する場合：
+TypeScript 版を使用する場合、
 
 ```bash
-npm run client -- --remote  # AgentCore Runtime に接続
-npm run client -- --local   # ローカル Server に接続
+npm run mcp:remote       # AgentCore Runtime に接続
+npm run mcp:local        # ローカル Server に接続
+npm run mcp:remote:debug # debug モード
 ```
 
 ## Step 7: デプロイされた MCP Server のテスト
 
-リモート Client を使用して、デプロイされた MCP Server をテストしましょう：
+リモート Client を使用して、デプロイされた MCP Server をテストしましょう。
 
 ```bash
 uv run client.py --remote
@@ -167,30 +166,22 @@ uv run client.py --remote
 
 ### ツール呼び出しのテスト
 
-MCP ツールを実際に呼び出してテストしましょう：
+MCP ツールを実際に呼び出してテストしましょう。
 
 ```bash
-uv run client.py --remote --invoke-tool sample-tool
+uv run client.py --remote
 ```
 
 ## deployment_config.json について
 
-`deployment_config.json` ファイルは、deploy.py スクリプトによって作成および更新される設定ファイルです。このファイルには以下の情報が格納されます：
+`deployment_config.json` ファイルは、deploy.py スクリプトによって作成および更新される設定ファイルです。このファイルには以下の情報が格納されます。
 
 - **cognito**: ユーザープール ID、Client ID、ベアラートークン、ディスカバリー URL
 - **iam_role**: ロール名と ARN
 - **docker**: リポジトリ名、イメージ URI、ECR URI
 - **agent_runtime**: エージェント名、ARN、ステータス、作成日時
 
-このファイルはべき等性を保ちながら更新されるため、デプロイプロセスを中断して再開することができます。また、Client アプリケーションがこの情報を利用して AgentCore Runtime に接続することも可能です。
-
-## 次のステップ
-
-AgentCore Runtime に MCP Server を正常にデプロイできたので、次のことができます：
-
-1. **ツールの追加**: MCP Server に追加のツールを拡張する
-2. **カスタム認証**: カスタム JWT 認証機能を実装する
-3. **統合**: 他の AgentCore サービスと統合する
+このファイルはべき等性を保ちながら更新されるため、デプロイプロセスを中断して再開することができます。また、Client アプリケーションがこの情報を利用して AgentCore Runtime に接続する際に利用しています。
 
 ## 🎉 おめでとうございます！
 
@@ -212,7 +203,7 @@ const transport = new LoggingStreamableHTTPServerTransport({
 });
 ```
 
-ここでの重要なポイントは：
+ここでの重要なポイントは、
 
 1. `sessionIdGenerator: undefined` を設定することで、トランスポートはセッション ID を生成せず、ステートレスモードで動作します
 2. `stateless: isStateless` パラメータを明示的に設定することで、ステートレスモードを有効にします
@@ -248,7 +239,7 @@ this.sigv4 = new SignatureV4({
 const signedRequest = await this.sigv4.sign(request);
 ```
 
-ポイント：
+ポイント
 1. `defaultProvider()` を使用して EC2 インスタンスの IAM ロールや AWS CLI の設定から認証情報を自動的に取得
 2. `service: 'bedrock-agentcore'` で AgentCore サービスを指定
 3. `sign()` メソッドでリクエストに署名を追加
@@ -281,7 +272,7 @@ request = AWSRequest(
 self.sigv4.add_auth(request)
 ```
 
-ポイント：
+ポイント
 1. `boto3.Session()` を使用して AWS 認証情報を取得
 2. `SigV4Auth` オブジェクトを作成し、サービス名 'bedrock-agentcore' を指定
 3. `add_auth()` メソッドでリクエストに署名を追加
@@ -378,8 +369,20 @@ uv run deploy.py --check-status
 # トークンを更新
 uv run deploy.py --update-token
 
+# 認証メソッドテストを実行（SigV4とOAuth Bearer Tokenの両方をテスト）
+uv run deploy.py --test-auth
+
 # SigV4 認証を使用して AgentCore Runtime の MCP ツールリストを取得
 uv run deploy.py --sigv4-list-tools
+
+# 実行ロールにポリシーを適用
+uv run deploy.py --put-role-policy [--role-name <role-name>] [--policy-name <policy-name>]
+
+# 実行ロールのポリシーを取得
+uv run deploy.py --get-role-policy [--role-name <role-name>] [--policy-name <policy-name>]
+
+# 現在の実行ロールの詳細情報を表示
+uv run deploy.py --show-current-role
 ```
 
 このスクリプトは、AWS SDK for Python (boto3) を使用して AWS サービスとやり取りし、Docker コマンドを実行して MCP Server をビルドおよびデプロイします。utils.py モジュールには、Cognito 設定、IAM ロール作成、認証テストなどの補助機能が実装されています。
@@ -388,3 +391,4 @@ uv run deploy.py --sigv4-list-tools
 
 MCP Inspector から AgentCore Runtime に接続してみてください。おそらくうまく接続できないはずです。
 なぜか考えたり調べたりしてみましょう。`/answer/README.md` に回答が記載されています。
+ 
