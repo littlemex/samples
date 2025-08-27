@@ -480,7 +480,8 @@ async function main(): Promise<void> {
 }
 
 // メイン実行
-if (require.main === module) {
+// ES モジュールでは import.meta.url を使用してメインモジュールかどうかを判定
+if (import.meta.url === import.meta.resolve(process.argv[1])) {
   main().catch((error) => {
     console.error('Unhandled error:', error);
     process.exit(1);

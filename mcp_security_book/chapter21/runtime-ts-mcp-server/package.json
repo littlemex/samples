@@ -5,7 +5,7 @@
   "main": "direct_agentcore_client.js",
   "type": "module",
   "scripts": {
-    "build": "tsc client.ts",
+    "build": "tsc *.ts",
     "mcp:local": "ts-node client.ts --local",
     "mcp:remote": "ts-node client.ts --remote",
     "mcp:local:debug": "ts-node client.ts --local --debug",
@@ -20,6 +20,7 @@
   "dependencies": {
     "@aws-crypto/sha256-js": "^5.2.0",
     "@aws-sdk/client-bedrock-agentcore": "^3.515.0",
+    "@aws-sdk/client-secrets-manager": "^3.873.0",
     "@aws-sdk/client-ssm": "^3.873.0",
     "@aws-sdk/client-sts": "^3.873.0",
     "@aws-sdk/credential-provider-node": "^3.873.0",

@@ -30,7 +30,6 @@ try:
     from boto3.session import Session
 
     from utils import (
-        decode_jwt,
         reauthenticate_user,
         setup_cognito_user_pool,
         update_agentcore_role,
@@ -355,7 +354,7 @@ class MCPServerDeployer:
                         # Access トークンの場合、client_id を使用
                         if payload.get('token_use') == 'access':
                             # Access トークンには aud がないため、空の配列を設定
-                            print(f"  Access トークンのため allowedAudience を空に設定")
+                            print("  Access トークンのため allowedAudience を空に設定")
                             audience = None
                             
                         # JWT 設定

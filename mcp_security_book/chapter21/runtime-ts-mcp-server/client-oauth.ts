@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * OAuth JWT 認証を使用した MCP クライアント
- * deployment_config.json の設定を使用してアクセス
+ * AWS Secrets Manager と Parameter Store から設定を取得
  * 
  * 注意: AWS Bedrock AgentCore Runtime の JWT Bearer Token 認証では、
  * Access トークン（token_use: "access"）を使用することが推奨されています。
@@ -11,6 +11,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import fetch from 'node-fetch';
 import { Command } from 'commander';
+import { 
+  SecretsManagerClient, 
+  GetSecretValueCommand 
+} from '@aws-sdk/client-secrets-manager';
+import { 
+  SSMClient, 
+  GetParameterCommand 
+} from '@aws-sdk/client-ssm';
 
 // ログレベル設定
 let debugMode = false;
@@ -36,26 +44,13 @@ interface CognitoConfig {
   pool_id: string;
   client_id: string;
   bearer_token: string;
+  access_token?: string;
+  id_token?: string;
   discovery_url: string;
 }
 
 interface DeploymentConfig {
   cognito: CognitoConfig;
-  iam_role: {
-    role_name: string;
-    role_arn: string;
-  };
-  docker: {
-    repository_name: string;
-    image_uri: string;
-    ecr_uri: string;
-  };
-  agent_runtime: {
-    agent_name: string;
-    agent_arn: string;
-    status: string;
-    created_at: string;
-  };
   agent_arn: string;
 }
 
@@ -80,36 +75,114 @@ interface MCPResponse {
 class OAuthMCPClient {
   private config: DeploymentConfig;
   private serverUrl: string;
+  private region: string;
 
-  constructor(configPath: string = './deployment_config.json') {
-    // 設定ファイルを読み込み
-    const fullConfigPath = path.resolve(__dirname, configPath);
-    
-    if (!fs.existsSync(fullConfigPath)) {
-      throw new Error(`設定ファイルが見つかりません: ${fullConfigPath}`);
+  constructor() {
+    this.config = {
+      cognito: {
+        pool_id: '',
+        client_id: '',
+        bearer_token: '',
+        discovery_url: ''
+      },
+      agent_arn: ''
+    };
+    this.region = process.env.AWS_REGION || 'us-east-1';
+    this.serverUrl = '';
+  }
+
+  /**
+   * AWS Secrets Manager から Cognito 認証情報を取得
+   */
+  private async getCognitoCredentials(): Promise<CognitoConfig> {
+    try {
+      console.log('🔐 Secrets Manager から Cognito 認証情報を取得中...');
+      
+      const client = new SecretsManagerClient({ region: this.region });
+      const command = new GetSecretValueCommand({
+        SecretId: 'mcp_server/cognito/credentials',
+      });
+      
+      const response = await client.send(command);
+      
+      if (!response.SecretString) {
+        throw new Error('Cognito 認証情報が見つかりません');
+      }
+      
+      const credentials = JSON.parse(response.SecretString) as CognitoConfig;
+      console.log('✅ Cognito 認証情報を取得しました');
+      log.debug(`Client ID: ${credentials.client_id}`);
+      log.debug(`Discovery URL: ${credentials.discovery_url}`);
+      
+      return credentials;
+    } catch (error) {
+      console.error('❌ Cognito 認証情報の取得に失敗しました:', error);
+      throw error;
     }
+  }
 
-    this.config = JSON.parse(fs.readFileSync(fullConfigPath, 'utf-8'));
-    
-    // AgentCore Runtime のエンドポイント URL を構築（SigV4 クライアントと同じ方法）
-    const agentArn = this.config.agent_arn;
-    const encodedArn = agentArn.replace(/:/g, '%3A').replace(/\//g, '%2F');
-    const region = agentArn.split(':')[3];
-    
-    // SigV4 クライアントと同じ URL 形式を使用
-    this.serverUrl = `https://bedrock-agentcore.${region}.amazonaws.com/runtimes/${encodedArn}/invocations?qualifier=DEFAULT`;
-    
-    console.log('🔧 OAuth MCP クライアント初期化完了');
-    console.log(`📍 サーバー URL: ${this.serverUrl}`);
-    console.log(`🔑 Client ID: ${this.config.cognito.client_id}`);
-    console.log(`🔖 トークン種類: ${this.getTokenType()}`);
-    console.log(`🎯 トークン Audience: ${this.getTokenAudience()}`);
-    console.log(`⏰ トークン有効期限: ${this.getTokenExpiration()}`);
-    
-    log.debug('OAuth MCP クライアント初期化の詳細情報:');
-    log.debug(`設定ファイルパス: ${fullConfigPath}`);
-    log.debug(`エージェント ARN: ${agentArn}`);
-    log.debug(`リージョン: ${region}`);
+  /**
+   * AWS Parameter Store からエージェント ARN を取得
+   */
+  private async getAgentArn(): Promise<string> {
+    try {
+      console.log('🔍 Parameter Store からエージェント ARN を取得中...');
+      
+      const client = new SSMClient({ region: this.region });
+      const command = new GetParameterCommand({
+        Name: '/mcp_server/runtime/agent_arn',
+      });
+      
+      const response = await client.send(command);
+      
+      if (!response.Parameter?.Value) {
+        throw new Error('エージェント ARN が見つかりません');
+      }
+      
+      const agentArn = response.Parameter.Value;
+      console.log('✅ エージェント ARN を取得しました');
+      log.debug(`Agent ARN: ${agentArn}`);
+      
+      return agentArn;
+    } catch (error) {
+      console.error('❌ エージェント ARN の取得に失敗しました:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * クライアントを初期化
+   */
+  async initialize(): Promise<void> {
+    try {
+      // Cognito 認証情報を取得
+      this.config.cognito = await this.getCognitoCredentials();
+      
+      // エージェント ARN を取得
+      this.config.agent_arn = await this.getAgentArn();
+      
+      // AgentCore Runtime のエンドポイント URL を構築
+      const agentArn = this.config.agent_arn;
+      const encodedArn = agentArn.replace(/:/g, '%3A').replace(/\//g, '%2F');
+      this.region = agentArn.split(':')[3];
+      
+      // URL を構築
+      this.serverUrl = `https://bedrock-agentcore.${this.region}.amazonaws.com/runtimes/${encodedArn}/invocations?qualifier=DEFAULT`;
+      
+      console.log('🔧 OAuth MCP クライアント初期化完了');
+      console.log(`📍 サーバー URL: ${this.serverUrl}`);
+      console.log(`🔑 Client ID: ${this.config.cognito.client_id}`);
+      console.log(`🔖 トークン種類: ${this.getTokenType()}`);
+      console.log(`🎯 トークン Audience: ${this.getTokenAudience()}`);
+      console.log(`⏰ トークン有効期限: ${this.getTokenExpiration()}`);
+      
+      log.debug('OAuth MCP クライアント初期化の詳細情報:');
+      log.debug(`エージェント ARN: ${agentArn}`);
+      log.debug(`リージョン: ${this.region}`);
+    } catch (error) {
+      console.error('❌ クライアント初期化エラー:', error);
+      throw error;
+    }
   }
 
   /**
@@ -267,9 +340,9 @@ class OAuthMCPClient {
   }
 
   /**
-   * サーバー初期化
+   * MCP サーバー初期化
    */
-  async initialize(): Promise<MCPResponse> {
+  async initializeMCP(): Promise<MCPResponse> {
     console.log('\n🚀 MCP サーバーを初期化中...');
     
     const request: MCPRequest = {
@@ -364,12 +437,11 @@ class OAuthMCPClient {
    */
   displayServerInfo(): void {
     console.log('\n📊 サーバー情報:');
-    console.log(`  エージェント名: ${this.config.agent_runtime.agent_name}`);
     console.log(`  エージェント ARN: ${this.config.agent_arn}`);
-    console.log(`  ステータス: ${this.config.agent_runtime.status}`);
-    console.log(`  作成日時: ${this.config.agent_runtime.created_at}`);
-    console.log(`  IAM ロール: ${this.config.iam_role.role_arn}`);
-    console.log(`  Docker イメージ: ${this.config.docker.image_uri}`);
+    console.log(`  リージョン: ${this.region}`);
+    console.log(`  サーバー URL: ${this.serverUrl}`);
+    console.log(`  Cognito Client ID: ${this.config.cognito.client_id}`);
+    console.log(`  Discovery URL: ${this.config.cognito.discovery_url}`);
   }
 }
 
@@ -399,11 +471,14 @@ async function main() {
     // クライアントを初期化
     const client = new OAuthMCPClient();
     
+    // AWS から設定を取得して初期化
+    await client.initialize();
+    
     // サーバー情報を表示
     client.displayServerInfo();
 
-    // 1. サーバーを初期化
-    const initResult = await client.initialize();
+    // 1. MCP サーバーを初期化
+    const initResult = await client.initializeMCP();
     console.log('✅ 初期化完了:', JSON.stringify(initResult.result, null, 2));
 
     // 2. 利用可能なツールを取得
