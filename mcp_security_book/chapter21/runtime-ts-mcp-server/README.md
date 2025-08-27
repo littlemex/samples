@@ -97,7 +97,7 @@ uv run deploy.py --step2
 npm install && npm run build
 
 # ローカルで Server 立ち上げ
-PORT=13000 npm run start
+npm run start
 ```
 
 ## Step 4: Docker 経由での MCP Server デプロイメント
