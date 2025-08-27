@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "AWS Bedrock AgentCoreに直接アクセスするクライアント",
   "main": "direct_agentcore_client.js",
+  "type": "module",
   "scripts": {
     "build": "tsc client.ts",
     "mcp:local": "ts-node client.ts --local",

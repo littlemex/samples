@@ -30,6 +30,7 @@ try:
     from boto3.session import Session
 
     from utils import (
+        decode_jwt,
         reauthenticate_user,
         setup_cognito_user_pool,
         update_agentcore_role,
@@ -99,14 +100,16 @@ class MCPServerDeployer:
             print(f"  Client ID: {client_id}")
 
             # reauthenticate_user関数を呼び出して新しいトークンを取得
-            bearer_token = reauthenticate_user(client_id)
+            tokens = reauthenticate_user(client_id)
 
-            if not bearer_token:
+            if not tokens:
                 print("❌ トークン更新に失敗しました。")
                 return False
 
             # 設定を更新
-            self.config["cognito"]["bearer_token"] = bearer_token
+            self.config["cognito"]["bearer_token"] = tokens["bearer_token"]  # 互換性のために残す
+            self.config["cognito"]["access_token"] = tokens["access_token"]
+            self.config["cognito"]["id_token"] = tokens["id_token"]
             self.save_config()
 
             print("✓ トークン更新完了")
@@ -189,7 +192,7 @@ class MCPServerDeployer:
 
         return True
 
-    def step4_docker_deployment(self):
+    def step4_docker_deployment(self, oauth=False):
         """ステップ 4: Docker デプロイメント（自動実行）"""
         print("\n=== ステップ 4: Docker 経由での MCP Server デプロイメント ===")
 
@@ -280,6 +283,11 @@ class MCPServerDeployer:
                     "❌ エラー: IAM ロールが設定されていません。先にステップ 2 を実行してください。"
                 )
                 return False
+                
+            # OAuth認証を使用する場合はCognito設定を確認
+            if oauth and "cognito" not in self.config:
+                print("❌ エラー: OAuth認証を使用するにはCognito設定が必要です。先にステップ 1 を実行してください。")
+                return False
 
             try:
                 # AgentCore Control クライアントを作成
@@ -296,21 +304,83 @@ class MCPServerDeployer:
                 print(f"  イメージ URI: {image_uri}")
                 print(f"  IAM ロール: {self.config['iam_role']['role_arn']}")
 
-                # AgentCore Runtime を作成
-                # 注: authorizerConfiguration を指定しない場合、デフォルトで SigV4 認証が使用されます
-                # JWT Bearer Token 認証を使用する場合は、authorizerConfiguration パラメータを指定する必要があります
-                response = agentcore_client.create_agent_runtime(
-                    agentRuntimeName=agent_name,
-                    agentRuntimeArtifact={
+                # AgentCore Runtime 作成のパラメータを準備
+                create_params = {
+                    "agentRuntimeName": agent_name,
+                    "agentRuntimeArtifact": {
                         "containerConfiguration": {"containerUri": image_uri}
                     },
-                    networkConfiguration={"networkMode": "PUBLIC"},
-                    roleArn=self.config["iam_role"]["role_arn"],
-                    protocolConfiguration={
+                    "networkConfiguration": {"networkMode": "PUBLIC"},
+                    "roleArn": self.config["iam_role"]["role_arn"],
+                    "protocolConfiguration": {
                         "serverProtocol": "MCP"  # MCPプロトコルを明示的に指定
-                    },
-                    # authorizerConfiguration を指定しないため、デフォルトで SigV4 認証が使用されます
-                )
+                    }
+                }
+                
+                # OAuth認証を使用する場合は authorizerConfiguration を追加
+                if oauth:
+                    print("  認証方式: OAuth (JWT Bearer Token)")
+                    
+                    # ID トークンを使用して Audience を確認（ID トークンには必ず aud フィールドがある）
+                    try:
+                        # ID トークンを優先的に使用
+                        if "id_token" in self.config["cognito"]:
+                            token = self.config["cognito"]["id_token"]
+                        else:
+                            token = self.config["cognito"]["bearer_token"]
+                        
+                        import base64
+                        import json
+                        
+                        # JWT ペイロード部分をデコード
+                        payload = json.loads(base64.b64decode(token.split('.')[1] + '==').decode('utf-8'))
+                        print(f"  トークン種類: {payload.get('token_use', '不明')}")
+                        
+                        # Audience を取得
+                        audience = None
+                        if 'aud' in payload:
+                            audience = payload['aud']
+                            if isinstance(audience, list):
+                                audience = audience[0]  # リストの場合は最初の要素を使用
+                            print(f"  トークン Audience: {audience}")
+                        else:
+                            # aud がない場合は client_id を使用
+                            audience = self.config["cognito"]["client_id"]
+                            print(f"  Audience が見つからないため client_id を使用: {audience}")
+                            
+                        # scope があれば表示
+                        if 'scope' in payload:
+                            print(f"  トークン Scope: {payload['scope']}")
+                        
+                        # Access トークンの場合、client_id を使用
+                        if payload.get('token_use') == 'access':
+                            # Access トークンには aud がないため、空の配列を設定
+                            print(f"  Access トークンのため allowedAudience を空に設定")
+                            audience = None
+                            
+                        # JWT 設定
+                        create_params["authorizerConfiguration"] = {
+                            "customJWTAuthorizer": {
+                                "discoveryUrl": self.config["cognito"]["discovery_url"],
+                                "allowedClients": [self.config["cognito"]["client_id"]]  # Cognitoでは allowedClients を使用
+                            }
+                        }
+                        
+                    except Exception as e:
+                        print(f"  ⚠️ トークン解析エラー: {e}")
+                        # エラーが発生した場合はデフォルト設定を使用
+                        create_params["authorizerConfiguration"] = {
+                            "customJWTAuthorizer": {
+                                "discoveryUrl": self.config["cognito"]["discovery_url"],
+                                # allowedAudience を空にして、任意の Audience を許可
+                                "allowedAudience": []
+                            }
+                        }
+                else:
+                    print("  認証方式: SigV4 (デフォルト)")
+                
+                # AgentCore Runtime を作成
+                response = agentcore_client.create_agent_runtime(**create_params)
 
                 agent_arn = response["agentRuntimeArn"]
                 status = response["status"]
@@ -431,7 +501,7 @@ class MCPServerDeployer:
             print(f"❌ 設定保存エラー: {e}")
             return False
 
-    def run_all_steps(self, agent_arn=None):
+    def run_all_steps(self, agent_arn=None, oauth=False):
         """全ステップを順番に実行"""
         print("=== 全ステップを実行します ===")
 
@@ -448,8 +518,8 @@ class MCPServerDeployer:
         # ステップ 3（情報表示のみ）
         self.step3_local_development()
 
-        # ステップ 4（自動実行）
-        if not self.step4_docker_deployment():
+        # ステップ 4（自動実行）- oauth パラメータを渡す
+        if not self.step4_docker_deployment(oauth=oauth):
             print("ステップ 4 で失敗しました。")
             return False
 
@@ -704,8 +774,10 @@ uv run deploy.py --step1              # Cognito 設定
 uv run deploy.py --step2              # IAM ロール作成/更新（自動処理）
 uv run deploy.py --step3              # ローカル開発手順を表示
 uv run deploy.py --step4              # Docker ビルドと ECR プッシュ（自動実行）
+uv run deploy.py --step4 --oauth      # OAuth認証を使用してデプロイ
 uv run deploy.py --step5 --agent-arn arn:aws:...  # 設定保存
 uv run deploy.py --all                # 全ステップ実行
+uv run deploy.py --all --oauth        # OAuth認証を使用して全ステップ実行
 uv run deploy.py --status             # 現在の設定状態を表示
 uv run deploy.py --update-token       # トークンを更新してSecrets Managerに保存
 uv run deploy.py --test-auth          # 認証メソッドテストを実行
@@ -714,6 +786,7 @@ uv run deploy.py --get-role-policy    # 現在のプロファイルの実行ロ�
 uv run deploy.py --put-role-policy --role-name <role-name> --policy-name <policy-name> --policy-file <file>
 uv run deploy.py --get-role-policy --role-name <role-name> --policy-name <policy-name>
 uv run deploy.py --show-current-role  # 現在の実行ロールの詳細情報を表示
+uv run deploy.py --decode-jwt <token>  # JWT トークンをデコードして内容を表示
 
 注意: --policy-file を指定しない場合、デフォルトの Bedrock AgentCore ポリシーが使用されます。
 """,
@@ -759,6 +832,7 @@ uv run deploy.py --show-current-role  # 現在の実行ロールの詳細情報�
 
     # その他のオプション
     parser.add_argument("--all", action="store_true", help="全ステップを順番に実行")
+    parser.add_argument("--oauth", action="store_true", help="OAuth認証（JWT Bearer Token）を使用してデプロイ")
     parser.add_argument("--status", action="store_true", help="現在の設定状態を表示")
     parser.add_argument(
         "--check-status",
@@ -805,6 +879,11 @@ uv run deploy.py --show-current-role  # 現在の実行ロールの詳細情報�
         action="store_true",
         help="現在の実行ロールの詳細情報を表示",
     )
+    parser.add_argument(
+        "--decode-jwt",
+        type=str,
+        help="JWT トークンをデコードして内容を表示する",
+    )
 
     args = parser.parse_args()
 
@@ -822,7 +901,7 @@ uv run deploy.py --show-current-role  # 現在の実行ロールの詳細情報�
     elif args.check_status:
         deployer.check_agent_status()
     elif args.all:
-        deployer.run_all_steps(args.agent_arn)
+        deployer.run_all_steps(args.agent_arn, args.oauth)
     elif args.update_token:
         deployer.update_token()
     elif args.step1:
@@ -832,7 +911,7 @@ uv run deploy.py --show-current-role  # 現在の実行ロールの詳細情報�
     elif args.step3:
         deployer.step3_local_development()
     elif args.step4:
-        deployer.step4_docker_deployment()
+        deployer.step4_docker_deployment(oauth=args.oauth)
     elif args.step5:
         deployer.step5_save_configuration(args.agent_arn)
     elif args.put_role_policy:
@@ -868,6 +947,11 @@ uv run deploy.py --show-current-role  # 現在の実行ロールの詳細情報�
         from utils import sigv4_list_mcp_tools
 
         sigv4_list_mcp_tools(agent_arn, deployer.region, args.output_format)
+    elif args.decode_jwt:
+        # JWT トークンをデコードして内容を表示
+        from utils import decode_jwt
+        
+        decode_jwt(args.decode_jwt)
 
 
 if __name__ == "__main__":

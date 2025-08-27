@@ -44,13 +44,14 @@ def setup_cognito_user_pool():
             Permanent=True,
         )
 
-        # Authenticate User and get Access Token
+        # Authenticate User and get Access Token and ID Token
         auth_response = cognito_client.initiate_auth(
             ClientId=client_id,
             AuthFlow="USER_PASSWORD_AUTH",
             AuthParameters={"USERNAME": "testuser", "PASSWORD": "MyPassword123!"},
         )
-        bearer_token = auth_response["AuthenticationResult"]["AccessToken"]
+        access_token = auth_response["AuthenticationResult"]["AccessToken"]
+        id_token = auth_response["AuthenticationResult"]["IdToken"]
 
         # Output the required values
         print(f"Pool id: {pool_id}")
@@ -58,13 +59,16 @@ def setup_cognito_user_pool():
             f"Discovery URL: https://cognito-idp.{region}.amazonaws.com/{pool_id}/.well-known/openid-configuration"
         )
         print(f"Client ID: {client_id}")
-        print(f"Bearer Token: {bearer_token}")
+        print(f"Access Token: {access_token}")
+        print(f"ID Token: {id_token}")
 
         # Return values if needed for further processing
         return {
             "pool_id": pool_id,
             "client_id": client_id,
-            "bearer_token": bearer_token,
+            "access_token": access_token,
+            "id_token": id_token,
+            "bearer_token": access_token,  # 互換性のために残す
             "discovery_url": f"https://cognito-idp.{region}.amazonaws.com/{pool_id}/.well-known/openid-configuration",
         }
     except Exception as e:
@@ -79,14 +83,21 @@ def reauthenticate_user(client_id):
     # Initialize Cognito client
     cognito_client = boto3.client("cognito-idp", region_name=region)
 
-    # Authenticate User and get Access Token
+    # Authenticate User and get Access Token and ID Token
     auth_response = cognito_client.initiate_auth(
         ClientId=client_id,
         AuthFlow="USER_PASSWORD_AUTH",
         AuthParameters={"USERNAME": "testuser", "PASSWORD": "MyPassword123!"},
     )
-    bearer_token = auth_response["AuthenticationResult"]["AccessToken"]
-    return bearer_token
+    access_token = auth_response["AuthenticationResult"]["AccessToken"]
+    id_token = auth_response["AuthenticationResult"]["IdToken"]
+    
+    # 両方のトークンを返す
+    return {
+        "access_token": access_token,
+        "id_token": id_token,
+        "bearer_token": access_token  # 互換性のために残す
+    }
 
 
 def create_agentcore_role(agent_name):
@@ -1059,9 +1070,10 @@ def run_auth_test(config, region="us-east-1"):
     # 推奨クライアントを表示
     print("\n🚀 推奨クライアント:")
     if test_result["oauth_success"]:
-        print("  uv run simple_protocol_debug_client.py --region us-east-1")
+        print("  npm run mcp:remote:oauth")
     if test_result["sigv4_success"]:
-        print("  uv run client.py")
+        print("  uv run client.py --remote")
+        print("  npm run mcp:remote:sigv4")
 
     return test_result
 
@@ -1187,6 +1199,62 @@ def sigv4_list_mcp_tools(agent_arn, region="us-east-1", output_format="pretty"):
         import traceback
 
         traceback.print_exc()
+        return None
+
+
+def decode_jwt(token):
+    """
+    JWT トークンをデコードして内容を表示する
+
+    Args:
+        token (str): JWT トークン
+
+    Returns:
+        dict: デコードされたペイロード
+    """
+    import base64
+    import json
+
+    try:
+        # ペイロード部分（2番目の部分）を取得
+        payload = token.split('.')[1]
+        
+        # Base64 パディングを調整
+        padding = '=' * (4 - len(payload) % 4)
+        payload += padding
+        
+        # Base64 デコード
+        decoded = base64.b64decode(payload)
+        
+        # JSON としてパース
+        payload_json = json.loads(decoded)
+        
+        # トークンの種類を判定
+        token_type = "不明"
+        if "token_use" in payload_json:
+            if payload_json["token_use"] == "access":
+                token_type = "アクセストークン"
+            elif payload_json["token_use"] == "id":
+                token_type = "ID トークン"
+        
+        print("\n=== JWT トークン解析結果 ===")
+        print(f"トークン種類: {token_type}")
+        
+        # 重要なフィールドを表示
+        important_fields = ["sub", "iss", "client_id", "scope", "aud", "exp", "iat", "token_use", "username"]
+        print("\n重要なフィールド:")
+        for field in important_fields:
+            if field in payload_json:
+                print(f"  {field}: {payload_json[field]}")
+        
+        # 完全な内容を表示
+        print("\n完全なペイロード:")
+        print(json.dumps(payload_json, indent=2, ensure_ascii=False))
+        
+        return payload_json
+    
+    except Exception as e:
+        print(f"❌ JWT トークン解析エラー: {e}")
         return None
 
 

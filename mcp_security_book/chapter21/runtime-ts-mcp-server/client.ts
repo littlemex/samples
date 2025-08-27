@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /**
- * Final Fixed SigV4 MCP Protocol Debug Client (TypeScript版)
+ * SigV4 MCP Protocol Debug Client (TypeScript版)
  *
- * Python版のboto3実装を完全に模倣
  */
 
 import { Command } from 'commander';
@@ -80,7 +79,7 @@ class MCPClient {
     const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
     const dateStamp = amzDate.substr(0, 8);
 
-    // ヘッダーを準備（Python版のboto3と同じ方法）
+    // ヘッダーを準備
     const signedHeaders: Record<string, string> = {};
 
     // 元のヘッダーをコピー（小文字化）
@@ -109,7 +108,6 @@ class MCPClient {
 
     const payloadHash = crypto.createHash('sha256').update(body, 'utf8').digest('hex');
 
-    // Python版のboto3と同じパスエンコーディングを再現
     // ARN部分のみ二重エンコーディングする
     let canonicalUri = url.pathname;
     // ARN部分を二重エンコーディング
@@ -141,7 +139,7 @@ class MCPClient {
 
     log.debug('String to Sign:', stringToSign);
 
-    // 署名を計算（Python版と同じ方法）
+    // 署名を計算
     const kDate = crypto
       .createHmac('sha256', `AWS4${credentials.secretAccessKey}`)
       .update(dateStamp)
@@ -171,7 +169,6 @@ class MCPClient {
   async sendRequest(payload: MCPRequest): Promise<MCPResponse> {
     log.debug(`Sending request: ${payload.method} (ID: ${payload.id})`);
 
-    // Python版と完全に同じJSON形式を再現
     let data: string;
     if (payload.method === 'initialize') {
       data =
@@ -193,7 +190,6 @@ class MCPClient {
       const credentialsProvider = defaultProvider();
       const credentials = await credentialsProvider();
 
-      // Python版と同じヘッダー構成
       const headers = {
         Accept: 'application/json, text/event-stream',
         'Content-Type': 'application/json',
@@ -297,7 +293,6 @@ async function testMCPConnection(client: MCPClient, connectionType: string): Pro
     // MCPプロトコルテスト
     console.log('🚀 Starting MCP initialization...');
 
-    // Python版と同じ初期化リクエスト
     const initPayload: MCPRequest = {
       method: 'initialize',
       params: {
