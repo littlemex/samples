@@ -10,10 +10,10 @@
 
 - TypeScript ベースの MCP Server を利用
 - AgentCore Runtime の MCP では Streamable HTTP のステートレスサポートが必要
-- MCP Client は Python、TypeScript の両方で提供（どちらも SigV4 認証でアクセス）
+- MCP Client は Python、TypeScript の両方で提供（SigV4 認証と OAuth 認証の両方をサポート）
 - Python ベースの AgentCore Runtime へのデプロイスクリプトを提供
 
-SigV4 については[こちら](https://aws.amazon.com/jp/builders-flash/202210/way-to-operate-api-2/) がわかりやすいです。pre
+SigV4 については[こちら](https://aws.amazon.com/jp/builders-flash/202210/way-to-operate-api-2/) がわかりやすいです。
 
 ### 理解したいポイント
 
@@ -27,6 +27,7 @@ SigV4 については[こちら](https://aws.amazon.com/jp/builders-flash/202210
 このプロジェクトには以下の主要ファイルが含まれています：
 
 - **client.ts**: TypeScript 実装の MCP Client です。SigV4 認証を使用して、ローカル MCP Server と Amazon Bedrock AgentCore Runtime の両方にアクセスできます。
+- **client-oauth.ts**: TypeScript 実装の MCP Client です。OAuth JWT Bearer Token 認証を使用して AgentCore Runtime にアクセスします。
 - **client.py**: Python 実装の MCP Client です。client.ts と同様に SigV4 認証でローカルと AgentCore Runtime へのアクセスに対応しています。
 - **deploy.py**: MCP Server を AgentCore Runtime へデプロイするための便利スクリプトです。各ステップごとに実行できる機能が提供されています。
 - **utils.py**: Cognito 設定、IAM ロール作成、認証テストなどの汎用的な機能を提供するユーティリティモジュールです。
@@ -57,8 +58,6 @@ cp .env.example .env
 AgentCore Runtime には認証が必要です。Runtime の場合、Inbound Auth には AWS IAM（SigV4）と JWT Bearer Token の二種類のアクセス制御方式があります。deploy.py では両方の認証方式に対応するための設定を行っています。
 
 Step 1 では、JWT Bearer Token 認証のために Amazon Cognito を設定します。utils.py の `setup_cognito_user_pool` 関数を使用して、Cognito ユーザープールとアプリケーション Client を作成します。作成したリソース情報は deployment_config.json に自動的に保存されます。
-
-ただし、このサンプルでは Client（client.ts と client.py）は SigV4 認証を使用して AgentCore Runtime にアクセスしています。
 
 ```bash
 # JavaScript SDK は機能不足のため Python を利用したスクリプトでデプロイします
@@ -114,7 +113,7 @@ deploy.py の `--step4` オプションを実行すると、以下の処理が�
 
 このステップでは、AWS SDK を使用して `bedrock-agentcore-control` サービスにアクセスし、MCP Server を AgentCore Runtime にデプロイします。デプロイされた Server の ARN は deployment_config.json に保存されます。
 
-AgentCore Runtime の作成時に `authorizerConfiguration` パラメータを指定しないため、デフォルトで SigV4 認証が使用されます。JWT Bearer Token 認証を使用する場合は、`authorizerConfiguration` パラメータを明示的に指定する必要があります。
+AgentCore Runtime の作成時に `authorizerConfiguration` パラメータを指定しないため、デフォルトで SigV4 認証が使用されます。JWT Bearer Token 認証を使用する場合は、`--oauth` オプションを指定します。
 
 ```bash
 uv run deploy.py --step4
@@ -133,48 +132,35 @@ deploy.py の `--step5` オプションを実行すると、以下の処理が�
 
 ```bash
 uv run deploy.py --step5
+
+# Auth の確認
+uv run deploy.py --test-auth
 ```
 
 ## Step 6: MCP Client の使用
 
 client.ts と client.py は、どちらも同じ機能を提供する MCP Client の実装です。言語の好みに応じて、TypeScript 版または Python 版を選択できます。両方とも SigV4 認証を使用して AgentCore Runtime にアクセスする機能と、認証なしでローカル MCP Server にアクセスする機能を備えています。
 
+また、client-oauth.ts は OAuth JWT Bearer Token 認証を使用して AgentCore Runtime にアクセスする機能を提供します。
+
 ```bash
-uv run client.py --remote  # AgentCore Runtime に接続
+uv run client.py --remote  # AgentCore Runtime に接続（SigV4認証）
 uv run client.py --local   # ローカル Server に接続
 ```
 
 TypeScript 版を使用する場合、
 
 ```bash
-npm run mcp:remote       # AgentCore Runtime に接続
-npm run mcp:local        # ローカル Server に接続
-npm run mcp:remote:debug # debug モード
-```
-
-## Step 7: デプロイされた MCP Server のテスト
-
-リモート Client を使用して、デプロイされた MCP Server をテストしましょう。
-
-```bash
-uv run client.py --remote
-```
-
-## Step 8: MCP ツールのリモート呼び出し
-
-次に、ツールをリストするだけでなく、実際に呼び出して完全な MCP 機能を実証する拡張 Client を作成しましょう。
-
-### ツール呼び出しのテスト
-
-MCP ツールを実際に呼び出してテストしましょう。
-
-```bash
-uv run client.py --remote
+npm run mcp:remote             # AgentCore Runtime に接続（SigV4認証）
+npm run mcp:local              # ローカル Server に接続
+npm run mcp:remote:debug       # debug モード
+npm run mcp:remote:oauth       # OAuth認証で接続
+npm run mcp:remote:oauth:debug # OAuth認証でdebugモード
 ```
 
 ## deployment_config.json について
 
-`deployment_config.json` ファイルは、deploy.py スクリプトによって作成および更新される設定ファイルです。このファイルには以下の情報が格納されます。
+`deployment_config.json` ファイルは、deploy.py スクリプトによって作成および更新される設定ファイルです。このファイルには以下の情報が格納されます。ただし、元々の参考とした公式 samples の名残であり実運用上は全ての設定を AWS Secret Manager に保存することを推奨します。[Issue#5](https://github.com/littlemex/samples/issues/5)
 
 - **cognito**: ユーザープール ID、Client ID、ベアラートークン、ディスカバリー URL
 - **iam_role**: ロール名と ARN
@@ -328,6 +314,7 @@ deploy.py スクリプトは、MCP Server を AgentCore Runtime にデプロイ�
 3. **MCP Server の作成 (--step3)**
    - 今回はすでに作ってあるが必要に応じて MCP Server を構築
    - echo でコメントを出すのみ
+   - 必要に応じて MCP Server のテスト等を実装する
 
 4. **Docker デプロイメント (--step4)**
    - Amazon ECR リポジトリの作成（存在しない場合）
@@ -354,10 +341,14 @@ deploy.py スクリプトは、MCP Server を AgentCore Runtime にデプロイ�
 # 全ステップを一度に実行
 uv run deploy.py --all
 
+# OAuth認証を使用して全ステップを実行
+uv run deploy.py --all --oauth
+
 # 個別のステップを実行
 uv run deploy.py --step1  # Cognito 設定
 uv run deploy.py --step2  # IAM ロール作成
 uv run deploy.py --step4  # Docker デプロイメント
+uv run deploy.py --step4 --oauth  # OAuth認証を使用してデプロイ
 uv run deploy.py --step5  # 設定保存
 
 # 現在の設定状態を表示
@@ -389,6 +380,5 @@ uv run deploy.py --show-current-role
 
 ## MCP Inspector から AgentCore Runtime に接続してみよう
 
-MCP Inspector から AgentCore Runtime に接続してみてください。おそらくうまく接続できないはずです。
+MCP Inspector から AgentCore Runtime に接続してみてください。うまく接続できないはずです。
 なぜか考えたり調べたりしてみましょう。`/answer/README.md` に回答が記載されています。
- 
