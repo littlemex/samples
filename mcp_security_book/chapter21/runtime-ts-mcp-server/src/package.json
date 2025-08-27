@@ -6,10 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node add.js",
-    "test": "node add.test.js",
-    "lint": "eslint *.ts",
-    "format": "npx prettier --write \"**/*.ts\""
+    "start": "node add.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.13.2",

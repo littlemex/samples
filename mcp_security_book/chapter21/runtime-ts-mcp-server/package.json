@@ -4,13 +4,15 @@
   "description": "AWS Bedrock AgentCoreに直接アクセスするクライアント",
   "main": "direct_agentcore_client.js",
   "scripts": {
-    "mcp:build": "tsc sigv4_mcp_client.ts",
-    "mcp:start": "node sigv4_mcp_client.js",
-    "mcp:dev": "ts-node sigv4_mcp_client.ts",
-    "mcp:local": "ts-node sigv4_mcp_client.ts --local",
-    "mcp:remote": "ts-node sigv4_mcp_client.ts --remote",
-    "mcp:local:debug": "ts-node sigv4_mcp_client.ts --local --debug",
-    "mcp:remote:debug": "ts-node sigv4_mcp_client.ts --remote --debug"
+    "build": "tsc client.ts",
+    "mcp:local": "ts-node client.ts --local",
+    "mcp:remote": "ts-node client.ts --remote",
+    "mcp:local:debug": "ts-node client.ts --local --debug",
+    "mcp:remote:debug": "ts-node client.ts --remote --debug",
+    "lint": "eslint \"client.ts\" \"src/**/*.ts\"",
+    "lint:fix": "eslint \"client.ts\" \"src/**/*.ts\" --fix",
+    "format": "prettier --write \"**/*.ts\"",
+    "format:check": "prettier --check \"**/*.ts\""
   },
   "dependencies": {
     "@aws-crypto/sha256-js": "^5.2.0",
@@ -29,9 +31,17 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.34.0",
     "@types/node": "^20.11.0",
     "@types/uuid": "^9.0.7",
+    "@typescript-eslint/eslint-plugin": "^8.41.0",
+    "@typescript-eslint/parser": "^8.41.0",
+    "eslint": "^9.34.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "prettier": "^3.6.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "typescript-eslint": "^8.41.0"
   }
 }

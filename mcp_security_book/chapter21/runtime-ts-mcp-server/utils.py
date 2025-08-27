@@ -631,14 +631,28 @@ def test_agentcore_authentication(agent_arn, region='us-east-1'):
     print("\n🔐 テスト 2: SigV4 認証")
     try:
         # AWS CLIを使用してSigV4署名付きリクエストを送信
+        # テストペイロード
+        test_payload = {
+            "method": "tools/list",
+            "params": {},
+            "jsonrpc": "2.0",
+            "id": 1
+        }
+        payload_str = json.dumps(test_payload)
+        import base64
+        payload_base64 = base64.b64encode(payload_str.encode()).decode()
+
         aws_cmd = [
-            'aws', 'bedrock-agentcore-runtime', 'invoke-agent-runtime',
-            '--agent-runtime-id', agent_arn.split('/')[-1],
-            '--session-id', 'test-session-123',
-            '--input-text', 'Hello, this is a test message',
+            'aws', 'bedrock-agentcore', 'invoke-agent-runtime',
+            '--agent-runtime-arn', agent_arn,
+            '--content-type', 'application/json',
+            '--accept', 'application/json, text/event-stream',
+            '--payload', payload_base64,
             '--region', region,
-            '--output', 'json'
+            '--output', 'json',
+            '/tmp/sigv4_response.json'
         ]
+        print(f"実行コマンド: {aws_cmd}")
         
         result = subprocess.run(aws_cmd, capture_output=True, text=True, timeout=30)
         
@@ -781,4 +795,508 @@ def install_awscurl():
             return False
     except Exception as e:
         print(f"❌ awscurl のインストールエラー: {e}")
+        return False
+
+
+# =============================================================================
+# IAM ロールポリシー管理機能
+# =============================================================================
+
+# Bedrock AgentCore ポリシーのデフォルト定義
+DEFAULT_BEDROCK_AGENTCORE_POLICY = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "BedrockAgentCoreFullAccess",
+            "Effect": "Allow",
+            "Action": [
+                "bedrock-agentcore:*"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "BedrockFullAccess",
+            "Effect": "Allow",
+            "Action": [
+                "bedrock:*"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+
+
+def get_current_role_name(boto_session=None):
+    """
+    現在のプロファイルの実行ロール名を取得
+    
+    Args:
+        boto_session: boto3.Session オブジェクト (オプション)
+    
+    Returns:
+        str: ロール名、または None
+    """
+    if not boto_session:
+        boto_session = Session()
+    
+    try:
+        # STSで現在のアイデンティティを取得
+        sts_client = boto_session.client('sts')
+        identity = sts_client.get_caller_identity()
+        arn = identity.get('Arn', '')
+        
+        # EC2 インスタンスプロファイルの場合
+        if ':assumed-role/' in arn:
+            # arn:aws:sts::account:assumed-role/role-name/instance-id から role-name を抽出
+            role_name = arn.split('/')[-2]
+            return role_name
+        elif ':role/' in arn:
+            # arn:aws:iam::account:role/role-name から role-name を抽出
+            role_name = arn.split('/')[-1]
+            return role_name
+        else:
+            print(f"⚠️  警告: ロールベースのアイデンティティではありません: {arn}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ エラー: 現在のロール名を取得できません: {e}")
+        return None
+
+
+def put_role_policy(role_name=None, policy_name='bedrock-agentcore-policy', 
+                   policy_document=None, boto_session=None, region=None):
+    """
+    指定したロールにポリシーを適用
+    
+    Args:
+        role_name (str): ロール名 (指定しない場合は現在のプロファイルから自動取得)
+        policy_name (str): ポリシー名
+        policy_document (dict): ポリシードキュメント (指定しない場合はデフォルトのBedrock AgentCoreポリシー)
+        boto_session: boto3.Session オブジェクト (オプション)
+        region (str): AWS リージョン
+    
+    Returns:
+        bool: 成功した場合 True
+    """
+    if not boto_session:
+        boto_session = Session()
+    
+    if not region:
+        region = boto_session.region_name or 'us-east-1'
+    
+    print("\n=== IAM ロールポリシーの適用 ===")
+    
+    # ロール名が指定されていない場合は現在のプロファイルから取得
+    if not role_name:
+        role_name = get_current_role_name(boto_session)
+        if not role_name:
+            print("❌ エラー: ロール名を取得できません。role_name パラメータで手動指定してください。")
+            return False
+        print(f"✓ 現在のプロファイルのロール名を取得: {role_name}")
+    
+    # ポリシードキュメントが指定されていない場合はデフォルトを使用
+    if not policy_document:
+        policy_document = DEFAULT_BEDROCK_AGENTCORE_POLICY
+        print(f"✓ デフォルトの Bedrock AgentCore ポリシーを使用")
+    
+    try:
+        # IAM クライアントを作成
+        iam_client = boto_session.client('iam')
+        
+        # ポリシーを適用
+        print(f"ポリシーを適用中...")
+        print(f"  ロール名: {role_name}")
+        print(f"  ポリシー名: {policy_name}")
+        print(f"  リージョン: {region}")
+        
+        response = iam_client.put_role_policy(
+            RoleName=role_name,
+            PolicyName=policy_name,
+            PolicyDocument=json.dumps(policy_document)
+        )
+        
+        print(f"✓ ポリシーの適用が完了しました")
+        print(f"  コマンド相当: aws iam put-role-policy --role-name {role_name} --policy-name {policy_name} --policy-document '<json>' --region {region}")
+        
+        # 適用されたポリシーの概要を表示
+        statements = policy_document.get('Statement', [])
+        print(f"\n適用されたポリシーの概要:")
+        for i, stmt in enumerate(statements):
+            sid = stmt.get('Sid', f'Statement{i+1}')
+            actions = stmt.get('Action', [])
+            if isinstance(actions, str):
+                actions = [actions]
+            print(f"  - {sid}: {', '.join(actions[:3])}{'...' if len(actions) > 3 else ''}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ エラー: ポリシーの適用に失敗しました: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def get_role_policy(role_name=None, policy_name='bedrock-agentcore-policy', 
+                   boto_session=None, region=None):
+    """
+    指定したロールのポリシーを取得
+    
+    Args:
+        role_name (str): ロール名 (指定しない場合は現在のプロファイルから自動取得)
+        policy_name (str): ポリシー名
+        boto_session: boto3.Session オブジェクト (オプション)
+        region (str): AWS リージョン
+    
+    Returns:
+        dict: ポリシードキュメント、または None
+    """
+    if not boto_session:
+        boto_session = Session()
+    
+    if not region:
+        region = boto_session.region_name or 'us-east-1'
+    
+    print("\n=== IAM ロールポリシーの取得 ===")
+    
+    # ロール名が指定されていない場合は現在のプロファイルから取得
+    if not role_name:
+        role_name = get_current_role_name(boto_session)
+        if not role_name:
+            print("❌ エラー: ロール名を取得できません。role_name パラメータで手動指定してください。")
+            return None
+        print(f"✓ 現在のプロファイルのロール名を取得: {role_name}")
+    
+    try:
+        # IAM クライアントを作成
+        iam_client = boto_session.client('iam')
+        
+        print(f"ポリシーを取得中...")
+        print(f"  ロール名: {role_name}")
+        print(f"  ポリシー名: {policy_name}")
+        print(f"  リージョン: {region}")
+        
+        response = iam_client.get_role_policy(
+            RoleName=role_name,
+            PolicyName=policy_name
+        )
+        
+        policy_document = response.get('PolicyDocument', {})
+        
+        print(f"✓ ポリシーの取得が完了しました")
+        print(f"  コマンド相当: aws iam get-role-policy --role-name {role_name} --policy-name {policy_name} --region {region}")
+        
+        print("\n=== ポリシー内容 ===")
+        print(json.dumps(policy_document, indent=2, ensure_ascii=False))
+        
+        return policy_document
+        
+    except iam_client.exceptions.NoSuchEntityException:
+        print(f"❌ エラー: 指定したポリシーが見つかりません")
+        print(f"  ロール名: {role_name}")
+        print(f"  ポリシー名: {policy_name}")
+        
+        # ロールにアタッチされているポリシー一覧を表示
+        try:
+            policies_response = iam_client.list_role_policies(RoleName=role_name)
+            policy_names = policies_response.get('PolicyNames', [])
+            if policy_names:
+                print(f"\nロール {role_name} にアタッチされているインラインポリシー:")
+                for name in policy_names:
+                    print(f"  - {name}")
+            else:
+                print(f"\nロール {role_name} にインラインポリシーはアタッチされていません")
+        except Exception as list_error:
+            print(f"ポリシー一覧の取得に失敗: {list_error}")
+        
+        return None
+    except Exception as e:
+        print(f"❌ エラー: ポリシーの取得に失敗しました: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def sigv4_list_mcp_tools(agent_arn, region='us-east-1', output_format='pretty'):
+    """
+    SigV4 認証を使用して AgentCore Runtime の MCP ツールリストを取得して表示する
+    
+    Args:
+        agent_arn (str): エージェント ARN
+        region (str): AWS リージョン
+        output_format (str): 出力形式 ('pretty', 'json', 'raw')
+    
+    Returns:
+        dict: ツールリスト情報
+    """
+    import subprocess
+    import json
+    import base64
+    
+    print(f"\n=== MCP ツールリスト取得 (SigV4認証) ===")
+    print(f"Agent ARN: {agent_arn}")
+    print(f"Region: {region}")
+    
+    # テストペイロード
+    test_payload = {
+        "method": "tools/list",
+        "params": {},
+        "jsonrpc": "2.0",
+        "id": 1
+    }
+    payload_str = json.dumps(test_payload)
+    payload_base64 = base64.b64encode(payload_str.encode()).decode()
+    
+    # 一時ファイルのパスを指定
+    output_file = '/tmp/sigv4_tools_response.json'
+    
+    # AWS CLIコマンドを構築
+    aws_cmd = [
+        'aws', 'bedrock-agentcore', 'invoke-agent-runtime',
+        '--agent-runtime-arn', agent_arn,
+        '--content-type', 'application/json',
+        '--accept', 'application/json, text/event-stream',
+        '--payload', payload_base64,
+        '--region', region,
+        '--output', 'json',
+        output_file  # 出力ファイルを指定
+    ]
+    
+    # コマンドを実行
+    result = subprocess.run(aws_cmd, capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        print(f"❌ ツールリスト取得エラー: {result.stderr}")
+        return None
+    
+    # 出力ファイルからレスポンスを読み取る
+    try:
+        with open(output_file, 'r') as f:
+            response = json.load(f)
+        
+        # レスポンスボディを取得
+        if 'body' in response:
+            body_str = response['body']
+            body = json.loads(body_str)
+        else:
+            body = response
+        
+        # ツールリストを抽出
+        if 'result' in body and 'tools' in body['result']:
+            tools = body['result']['tools']
+            
+            # 出力形式に応じて表示
+            if output_format == 'raw':
+                print(json.dumps(body))
+            elif output_format == 'json':
+                print(json.dumps(tools, indent=2, ensure_ascii=False))
+            else:  # pretty
+                print(f"\n✅ 利用可能な MCP ツール ({len(tools)}件):")
+                
+                for i, tool in enumerate(tools):
+                    name = tool.get('name', 'N/A')
+                    title = tool.get('title', 'N/A')
+                    desc = tool.get('description', 'N/A')
+                    
+                    print(f"\n🔧 ツール {i+1}: {name}")
+                    print(f"  タイトル: {title}")
+                    print(f"  説明: {desc}")
+                    
+                    # 入力スキーマがあれば表示
+                    if 'inputSchema' in tool:
+                        schema = tool['inputSchema']
+                        print("  入力パラメータ:")
+                        
+                        if 'properties' in schema:
+                            for param_name, param_info in schema['properties'].items():
+                                param_type = param_info.get('type', 'any')
+                                param_desc = param_info.get('description', '')
+                                required = "必須" if param_name in schema.get('required', []) else "任意"
+                                
+                                print(f"    - {param_name} ({param_type}, {required}): {param_desc}")
+            
+            return tools
+        else:
+            print("❌ ツールリストが見つかりません")
+            print(f"レスポンス: {body}")
+            return None
+            
+    except json.JSONDecodeError:
+        print(f"❌ JSON 解析エラー: {result.stdout}")
+        return None
+    except Exception as e:
+        print(f"❌ ツールリスト処理エラー: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def show_current_role_info(boto_session=None, region=None):
+    """
+    現在の実行ロールの詳細情報を表示
+    
+    Args:
+        boto_session: boto3.Session オブジェクト (オプション)
+        region (str): AWS リージョン
+    
+    Returns:
+        bool: 成功した場合 True
+    """
+    if not boto_session:
+        boto_session = Session()
+    
+    if not region:
+        region = boto_session.region_name or 'us-east-1'
+    
+    print("\n=== 現在の実行ロール情報 ===")
+    
+    try:
+        # STSで現在のアイデンティティを取得
+        sts_client = boto_session.client('sts')
+        identity = sts_client.get_caller_identity()
+        
+        print(f"✓ 現在のアイデンティティ:")
+        print(f"  アカウント ID: {identity.get('Account', 'N/A')}")
+        print(f"  ユーザー ID: {identity.get('UserId', 'N/A')}")
+        print(f"  ARN: {identity.get('Arn', 'N/A')}")
+        print(f"  リージョン: {region}")
+        
+        arn = identity.get('Arn', '')
+        role_name = None
+        
+        # ロール名を抽出
+        if ':assumed-role/' in arn:
+            # arn:aws:sts::account:assumed-role/role-name/instance-id から role-name を抽出
+            role_name = arn.split('/')[-2]
+            print(f"\n✓ 抽出したロール名: {role_name}")
+            print(f"  タイプ: Assumed Role (EC2 インスタンスプロファイルなど)")
+        elif ':role/' in arn:
+            # arn:aws:iam::account:role/role-name から role-name を抽出
+            role_name = arn.split('/')[-1]
+            print(f"\n✓ 抽出したロール名: {role_name}")
+            print(f"  タイプ: IAM Role")
+        else:
+            print(f"\n⚠️  警告: ロールベースのアイデンティティではありません")
+            print(f"  ユーザーベースのアイデンティティの可能性があります")
+            return False
+        
+        if not role_name:
+            print("❌ エラー: ロール名を抽出できませんでした")
+            return False
+        
+        # IAM クライアントでロールの詳細情報を取得
+        iam_client = boto_session.client('iam')
+        
+        print(f"\nロールの詳細情報を取得中...")
+        
+        try:
+            # ロールの基本情報を取得
+            role_response = iam_client.get_role(RoleName=role_name)
+            role_info = role_response['Role']
+            
+            print(f"\n=== ロールの基本情報 ===")
+            print(f"  ロール名: {role_info.get('RoleName', 'N/A')}")
+            print(f"  ロール ARN: {role_info.get('Arn', 'N/A')}")
+            print(f"  作成日: {role_info.get('CreateDate', 'N/A')}")
+            print(f"  パス: {role_info.get('Path', 'N/A')}")
+            print(f"  最大セッション時間: {role_info.get('MaxSessionDuration', 'N/A')} 秒")
+            
+            if 'Description' in role_info:
+                print(f"  説明: {role_info['Description']}")
+            
+            # 信頼ポリシーを表示
+            assume_role_policy = role_info.get('AssumeRolePolicyDocument', {})
+            if assume_role_policy:
+                print(f"\n=== 信頼ポリシー ===")
+                print(json.dumps(assume_role_policy, indent=2, ensure_ascii=False))
+            
+        except iam_client.exceptions.NoSuchEntityException:
+            print(f"❌ エラー: ロール '{role_name}' が見つかりません")
+            return False
+        
+        # アタッチされたマネージドポリシーを取得
+        try:
+            attached_policies_response = iam_client.list_attached_role_policies(RoleName=role_name)
+            attached_policies = attached_policies_response.get('AttachedPolicies', [])
+            
+            if attached_policies:
+                print(f"\n=== アタッチされたマネージドポリシー ({len(attached_policies)}件) ===")
+                for policy in attached_policies:
+                    print(f"  - {policy.get('PolicyName', 'N/A')}")
+                    print(f"    ARN: {policy.get('PolicyArn', 'N/A')}")
+            else:
+                print(f"\nアタッチされたマネージドポリシーはありません")
+                
+        except Exception as e:
+            print(f"マネージドポリシーの取得に失敗: {e}")
+        
+        # インラインポリシーを取得
+        try:
+            inline_policies_response = iam_client.list_role_policies(RoleName=role_name)
+            inline_policy_names = inline_policies_response.get('PolicyNames', [])
+            
+            if inline_policy_names:
+                print(f"\n=== インラインポリシー ({len(inline_policy_names)}件) ===")
+                for policy_name in inline_policy_names:
+                    print(f"  - {policy_name}")
+                    
+                    # 各インラインポリシーの詳細を取得（オプション）
+                    try:
+                        policy_response = iam_client.get_role_policy(
+                            RoleName=role_name,
+                            PolicyName=policy_name
+                        )
+                        policy_document = policy_response.get('PolicyDocument', {})
+                        
+                        # ポリシーのサイズをチェックして、小さい場合のみ表示
+                        policy_str = json.dumps(policy_document)
+                        if len(policy_str) < 1000:  # 1KB未満の場合のみ表示
+                            print(f"    ポリシー内容:")
+                            print(json.dumps(policy_document, indent=6, ensure_ascii=False))
+                        else:
+                            print(f"    ポリシーサイズ: {len(policy_str)} 文字 (大きいため略)")
+                            
+                    except Exception as policy_error:
+                        print(f"    ポリシー詳細の取得に失敗: {policy_error}")
+            else:
+                print(f"\nインラインポリシーはありません")
+                
+        except Exception as e:
+            print(f"インラインポリシーの取得に失敗: {e}")
+        
+        # タグ情報を取得
+        try:
+            tags_response = iam_client.list_role_tags(RoleName=role_name)
+            tags = tags_response.get('Tags', [])
+            
+            if tags:
+                print(f"\n=== タグ ({len(tags)}件) ===")
+                for tag in tags:
+                    print(f"  {tag.get('Key', 'N/A')}: {tag.get('Value', 'N/A')}")
+            else:
+                print(f"\nタグは設定されていません")
+                
+        except Exception as e:
+            print(f"タグ情報の取得に失敗: {e}")
+        
+        # コマンド例を表示
+        print(f"\n=== 関連コマンド例 ===")
+        print(f"# utils.py の関数を使用")
+        print(f"from utils import put_role_policy, get_role_policy")
+        print(f"put_role_policy('{role_name}')")
+        print(f"get_role_policy('{role_name}')")
+        print(f"\n# deploy.py で使用")
+        print(f"python deploy.py --put-role-policy --role-name {role_name}")
+        print(f"python deploy.py --get-role-policy --role-name {role_name}")
+        print(f"\n# AWS CLI 相当コマンド")
+        print(f"aws iam get-role --role-name {role_name} --region {region}")
+        print(f"aws iam list-attached-role-policies --role-name {role_name} --region {region}")
+        print(f"aws iam list-role-policies --role-name {role_name} --region {region}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ エラー: ロール情報の取得に失敗しました: {e}")
+        import traceback
+        traceback.print_exc()
         return False

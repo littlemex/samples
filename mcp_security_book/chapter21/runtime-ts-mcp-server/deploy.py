@@ -267,6 +267,8 @@ class MCPServerDeployer:
                 print(f"  IAM ロール: {self.config['iam_role']['role_arn']}")
                 
                 # AgentCore Runtime を作成
+                # 注: authorizerConfiguration を指定しない場合、デフォルトで SigV4 認証が使用されます
+                # JWT Bearer Token 認証を使用する場合は、authorizerConfiguration パラメータを指定する必要があります
                 response = agentcore_client.create_agent_runtime(
                     agentRuntimeName=agent_name,
                     agentRuntimeArtifact={
@@ -279,6 +281,7 @@ class MCPServerDeployer:
                     protocolConfiguration={
                         'serverProtocol': 'MCP'  # MCPプロトコルを明示的に指定
                     }
+                    # authorizerConfiguration を指定しないため、デフォルトで SigV4 認証が使用されます
                 )
                 
                 agent_arn = response['agentRuntimeArn']
@@ -586,6 +589,56 @@ class MCPServerDeployer:
             traceback.print_exc()
             return False
 
+    def put_role_policy(self, role_name=None, policy_name='bedrock-agentcore-policy', policy_file=None):
+        """指定したロールにポリシーを適用"""
+        from utils import put_role_policy, DEFAULT_BEDROCK_AGENTCORE_POLICY
+        from pathlib import Path
+        
+        policy_document = None
+        
+        # ポリシーファイルが指定されている場合は読み込み
+        if policy_file:
+            policy_path = Path(policy_file)
+            if not policy_path.exists():
+                print(f"❌ エラー: ポリシーファイルが見つかりません: {policy_file}")
+                return False
+            
+            try:
+                with open(policy_path, 'r') as f:
+                    policy_document = json.loads(f.read())
+                print(f"✓ ポリシーファイルを読み込み: {policy_file}")
+            except (json.JSONDecodeError, Exception) as e:
+                print(f"❌ エラー: ポリシーファイルの読み込みに失敗: {e}")
+                return False
+        
+        # utils.py の関数を呼び出し
+        return put_role_policy(
+            role_name=role_name,
+            policy_name=policy_name,
+            policy_document=policy_document,
+            boto_session=self.boto_session,
+            region=self.region
+        )
+    
+    def get_role_policy(self, role_name=None, policy_name='bedrock-agentcore-policy'):
+        """指定したロールのポリシーを取得"""
+        from utils import get_role_policy
+        
+        # utils.py の関数を呼び出し
+        result = get_role_policy(
+            role_name=role_name,
+            policy_name=policy_name,
+            boto_session=self.boto_session,
+            region=self.region
+        )
+        
+        return result is not None
+    
+    def show_current_role_info(self):
+        """現在の実行ロールの詳細情報を表示"""
+        from utils import show_current_role_info
+        return show_current_role_info(self.boto_session, self.region)
+
     def show_status(self):
         """現在の設定状態を表示"""
         print("\n=== 現在の設定状態 ===")
@@ -655,6 +708,13 @@ uv run deploy.py --all                # 全ステップ実行
 uv run deploy.py --status             # 現在の設定状態を表示
 uv run deploy.py --update-token       # トークンを更新してSecrets Managerに保存
 uv run deploy.py --test-auth          # 認証メソッドテストを実行
+uv run deploy.py --put-role-policy    # 現在のプロファイルの実行ロールにポリシーを適用
+uv run deploy.py --get-role-policy    # 現在のプロファイルの実行ロールのポリシーを取得
+uv run deploy.py --put-role-policy --role-name <role-name> --policy-name <policy-name> --policy-file <file>
+uv run deploy.py --get-role-policy --role-name <role-name> --policy-name <policy-name>
+uv run deploy.py --show-current-role  # 現在の実行ロールの詳細情報を表示
+
+注意: --policy-file を指定しない場合、デフォルトの Bedrock AgentCore ポリシーが使用されます。
 """)
     
     # ステップオプション
@@ -665,6 +725,9 @@ uv run deploy.py --test-auth          # 認証メソッドテストを実行
     parser.add_argument('--step5', action='store_true', help='ステップ 5: リモートアクセス用の設定保存')
     parser.add_argument('--step6', action='store_true', help='ステップ 6: 接続テスト手順を表示')
     parser.add_argument('--test-auth', action='store_true', help='認証メソッドテストを実行')
+    parser.add_argument('--sigv4-list-tools', action='store_true', help='SigV4 認証を使用して AgentCore Runtime の MCP ツールリストを取得して表示')
+    parser.add_argument('--output-format', type=str, choices=['pretty', 'json', 'raw'], default='pretty', 
+                    help='ツールリストの出力形式 (pretty: 整形表示, json: JSON形式, raw: 生データ)')
     
     # その他のオプション
     parser.add_argument('--all', action='store_true', help='全ステップを順番に実行')
@@ -672,6 +735,14 @@ uv run deploy.py --test-auth          # 認証メソッドテストを実行
     parser.add_argument('--check-status', action='store_true', help='デプロイされたエージェントのステータスを確認')
     parser.add_argument('--update-token', action='store_true', help='トークンのみを更新する')
     parser.add_argument('--agent-arn', type=str, help='エージェント ARN（ステップ 5 で必要）')
+    
+    # IAM ポリシー管理オプション
+    parser.add_argument('--put-role-policy', action='store_true', help='現在のプロファイルの実行ロールにポリシーを適用')
+    parser.add_argument('--get-role-policy', action='store_true', help='現在のプロファイルの実行ロールのポリシーを取得')
+    parser.add_argument('--role-name', type=str, help='対象のロール名（指定しない場合は現在のプロファイルから自動取得）')
+    parser.add_argument('--policy-name', type=str, default='bedrock-agentcore-policy', help='ポリシー名（デフォルト: bedrock-agentcore-policy）')
+    parser.add_argument('--policy-file', type=str, default='bedrock-agentcore-policy.json', help='ポリシーファイルのパス（デフォルト: bedrock-agentcore-policy.json）')
+    parser.add_argument('--show-current-role', action='store_true', help='現在の実行ロールの詳細情報を表示')
     
     args = parser.parse_args()
     
@@ -704,6 +775,12 @@ uv run deploy.py --test-auth          # 認証メソッドテストを実行
         deployer.step5_save_configuration(args.agent_arn)
     elif args.step6:
         deployer.step6_test_connection()
+    elif args.put_role_policy:
+        deployer.put_role_policy(args.role_name, args.policy_name, args.policy_file)
+    elif args.get_role_policy:
+        deployer.get_role_policy(args.role_name, args.policy_name)
+    elif args.show_current_role:
+        deployer.show_current_role_info()
     elif args.test_auth:
         # 認証テストのみを実行
         if 'agent_runtime' in deployer.config and 'agent_arn' in deployer.config['agent_runtime']:
@@ -718,7 +795,7 @@ uv run deploy.py --test-auth          # 認証メソッドテストを実行
         test_result = test_agentcore_authentication(agent_arn, deployer.region)
         
         # 詳細なcurlコマンドを表示
-        print("\n📋 詳細なcurlコマンド:")
+        print("\n� 詳A細なcurlコマンド:")
         oauth_cmd = get_detailed_curl_command(agent_arn, deployer.region, 'oauth')
         sigv4_cmd = get_detailed_curl_command(agent_arn, deployer.region, 'sigv4')
         
@@ -726,6 +803,22 @@ uv run deploy.py --test-auth          # 認証メソッドテストを実行
         print(oauth_cmd)
         print("\n🔐 SigV4版:")
         print(sigv4_cmd)
+    elif args.sigv4_list_tools:
+        # エージェント ARN を取得
+        if 'agent_runtime' in deployer.config and 'agent_arn' in deployer.config['agent_runtime']:
+            agent_arn = deployer.config['agent_runtime']['agent_arn']
+        elif 'agent_arn' in deployer.config:
+            agent_arn = deployer.config['agent_arn']
+        elif args.agent_arn:
+            agent_arn = args.agent_arn
+        else:
+            print("❌ エラー: エージェント ARN が見つかりません。")
+            print("   --agent-arn オプションで指定するか、先にデプロイを実行してください。")
+            return
+        
+        # ツールリストを取得して表示
+        from utils import sigv4_list_mcp_tools
+        sigv4_list_mcp_tools(agent_arn, deployer.region, args.output_format)
 
 
 if __name__ == "__main__":
