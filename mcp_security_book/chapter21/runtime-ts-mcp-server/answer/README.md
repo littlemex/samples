@@ -32,9 +32,9 @@ OAuth 2.0 と OpenID Connect の認証フローでは、ID トークンと Acces
 - **用途**: API やその他の保護されたリソースにアクセスするために使用
 - **特徴**: 認可（Authorization）に関するトークン
 
-## AWS Bedrock AgentCore Runtime での JWT Bearer Token 認証
+## Amazon Bedrock AgentCore Runtime での JWT Bearer Token 認証
 
-AWS Bedrock AgentCore Runtime の JWT Bearer Token 認証では、**Access トークン（アクセストークン）を使用することが推奨されています**。これは以下の理由によります。
+Amazon Bedrock AgentCore Runtime の JWT Bearer Token 認証では、**Access トークン（アクセストークン）を使用することが推奨されています**。これは以下の理由によります。
 
 1. AgentCore Runtime は保護されたリソースであり、アクセス権限の検証が必要です
 2. AWS の公式ドキュメントによると、「呼び出し元のエンティティまたはユーザーがエージェントを呼び出す際、IdP 固有のアクセストークンを Authorization ヘッダーのベアラートークンとして渡します」と説明されています
@@ -297,7 +297,7 @@ self.config["cognito"]["id_token"] = tokens["id_token"]
 const token = this.config.cognito.id_token;
 ```
 
-## AWS Bedrock AgentCore JWT 認証の詳細
+## Amazon Bedrock AgentCore JWT 認証の詳細
 
 ### 認証設定オプション
 

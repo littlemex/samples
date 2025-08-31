@@ -9,6 +9,12 @@
 - Streamable HTTP 形式の MCP Server として実装されています。
 - Express.js を使用して HTTP サーバーを立ち上げます。
 
+### 理解したいポイント
+
+- [ ] 1. MCP Server と MCP Client でどのようなやりとりをしているのか理解する。
+- [ ] 2. MCP Inspector を利用してみる。
+- [ ] 3. 自分で実装を変えてみて色々挙動を確認してみましょう。Initialization フェーズで Server/Client のバージョン不一致の場合どうなるでしょう？
+
 ## 使い方
 
 ### 依存関係のインストール
@@ -60,6 +66,38 @@ curl -X POST http://localhost:13000/mcp \
 - **clientInfo**: Client の識別情報を提供します。name フィールドには "curl-client"、version には "1.0.0" を設定しています。
 - **capabilities**: Client がサポートする機能を宣言します。この例では空のオブジェクトが設定されており、基本的な機能のみをサポートすることを示しています。
 
+```
+{
+  "result": {
+    "protocolVersion": "2025-06-18",
+    "capabilities": {
+      "tools": {
+        "listChanged": true
+      },
+      "resources": {
+        "listChanged": true
+      },
+      "completions": {}
+    },
+    "serverInfo": {
+      "name": "simple-add-server",
+      "version": "1.0.0"
+    }
+  },
+  "jsonrpc": "2.0",
+  "id": 1
+}
+```
+
+**プロトコルバージョンの確認**: Server は同じプロトコルバージョン "2025-06-18" を返すことで、Client との互換性を確認しています。
+
+**サーバー機能の宣言**: Server は `capabilities` で以下の機能をサポートすることを宣言しています。
+
+- **resources**: リソース機能をサポートし、同様にリソースリストの変更通知を送信できます。
+- **completions**: 補完機能ですが今回は使わないので空です。
+
+**サーバー情報**: serverInfo フィールドで Server の識別情報を提供しています。name は "simple-add-server"、version は "1.0.0" です。
+
 ```bash
 # 初期化リクエストを送信し、レスポンスヘッダーからセッション ID を取得する例
 SESSION_ID=$(curl -X POST http://localhost:13000/mcp \
@@ -102,15 +140,6 @@ MCP Streamable HTTP Server がポート 13000 でリッスン中
 }
 セッション初期化: 02d5d9de-4dfb-4dc6-afee-004bfac05d8b
 ```
-
-**プロトコルバージョンの確認**: Server は同じプロトコルバージョン "2025-06-18" を返すことで、Client との互換性を確認しています。
-
-**サーバー機能の宣言**: Server は以下の機能をサポートすることを宣言しています。
-
-- **resources**: リソース機能をサポートし、同様にリソースリストの変更通知を送信できます。
-- **completions**: 補完機能ですが今回は使わないので空です。
-
-**サーバー情報**: serverInfo フィールドで Server の識別情報を提供しています。name は "simple-add-server"、version は "1.0.0" です。
 
 ### ツール一覧の取得
 

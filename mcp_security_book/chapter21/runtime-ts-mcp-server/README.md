@@ -31,7 +31,7 @@ SigV4 については[こちら](https://aws.amazon.com/jp/builders-flash/202210
 - **client.py**: Python 実装の MCP Client です。client.ts と同様に SigV4 認証でローカルと AgentCore Runtime へのアクセスに対応しています。
 - **deploy.py**: MCP Server を AgentCore Runtime へデプロイするための便利スクリプトです。各ステップごとに実行できる機能が提供されています。
 - **utils.py**: Cognito 設定、IAM ロール作成、認証テストなどの汎用的な機能を提供するユーティリティモジュールです。
-- **deployment_config.json**: deploy.py の実行によって作成されるリソース情報が格納されるファイルです。べき等性を保ちながら更新されます。
+- **deployment_config.json**: deploy.py の実行によって作成されるリソース情報が格納されるファイルです。
 
 ## 前提条件
 
@@ -88,7 +88,7 @@ uv run deploy.py --step2
 
 ## Step 3: MCP Server の作成
 
-次に、Chapter14 で作成したシンプルな MCP Server を AgentCore Runtime で要求される制約に応じて修正しました。`PORT=8000` を利用するために環境変数で PORT 指定するなどの変更が多少入っています。**変更箇所を確認してみましょう。**
+次に、Chapter14 で作成したシンプルな MCP Server を AgentCore Runtime で要求される制約に応じて修正しました。**変更箇所を確認してみましょう。**
 
 このステップでは、TypeScript ベースの MCP Server のローカル開発環境をセットアップします。Server は Model Context Protocol に準拠し、AgentCore Runtime の要件を満たすように設計されています。
 
@@ -167,7 +167,7 @@ npm run mcp:remote:oauth:debug # OAuth認証でdebugモード
 - **docker**: リポジトリ名、イメージ URI、ECR URI
 - **agent_runtime**: エージェント名、ARN、ステータス、作成日時
 
-このファイルはべき等性を保ちながら更新されるため、デプロイプロセスを中断して再開することができます。また、Client アプリケーションがこの情報を利用して AgentCore Runtime に接続する際に利用しています。
+デプロイプロセスを中断して再開することができます。また、Client アプリケーションがこの情報を利用して AgentCore Runtime に接続する際に利用しています。
 
 ## 🎉 おめでとうございます！
 
@@ -197,7 +197,7 @@ const transport = new LoggingStreamableHTTPServerTransport({
 
 ステートレスモードでは、リクエスト間で状態が共有されず、各リクエストは独立して処理されます。これにより、Server は複数のインスタンスに分散されても一貫した動作が保証され、AgentCore Runtime の要件を満たします。
 
-また、AgentCore Runtime の技術的な要件として、Server は `0.0.0.0` アドレスでリッスンし、ポート `8000` を使用する必要があります。これは環境変数 `PORT=8000` を設定することで実現できます。MCP エンドポイントは `/mcp` パスで公開する必要があります。
+また、AgentCore Runtime の技術的な要件として、Server は `0.0.0.0` アドレスでリッスンし、ポート `8000` を使用する必要があります。MCP エンドポイントは `/mcp` パスで公開する必要があります。
 
 ## 2. MCP Client で SigV4 認証でのアクセスはどうやっているのか？
 
@@ -331,11 +331,10 @@ deploy.py スクリプトは、MCP Server を AgentCore Runtime にデプロイ�
 
 ### 重要な実装ポイント
 
-1. **べき等性**：スクリプトはべき等性を保ち、同じコマンドを複数回実行しても動作します
-2. **エラーハンドリング**：各ステップで詳細なエラーハンドリングを実装しています
-3. **設定管理**：deployment_config.json ファイルを使用して設定を保存・管理します
-4. **認証テスト**：SigV4 と OAuth Bearer Token の両方の認証方法をテストする機能があります
-5. **ロール更新**：既存の IAM ロールを最新の権限で自動的に更新します
+1. **エラーハンドリング**：各ステップで詳細なエラーハンドリングを実装しています
+2. **設定管理**：deployment_config.json ファイルを使用して設定を保存・管理します
+3. **認証テスト**：SigV4 と OAuth Bearer Token の両方の認証方法をテストする機能があります
+4. **ロール更新**：既存の IAM ロールを最新の権限で自動的に更新します
 
 ```bash
 # 全ステップを一度に実行
