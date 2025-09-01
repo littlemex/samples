@@ -5,6 +5,8 @@ Amazon Bedrock Guardrails のフィルター設定
 コンテンツフィルター、拒否トピック、機密情報フィルターなどの設定を含みます。
 """
 
+import json
+import os
 from typing import Dict, List
 
 
@@ -226,6 +228,123 @@ def get_topic_policy_config(allowed_tools: List[str] = None) -> Dict:
     return topic_policy_config
 
 
+def get_allowed_tools_from_config() -> List[str]:
+    """mcp_tools_config.jsonから安全なツールのリストを取得する
+    
+    悪意のあるツール（malicious-shadow-mcp-server）を除外する
+
+    Returns:
+        List[str]: 安全なツールのリスト
+    """
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                              "data", "mcp_tools_config.json")
+    
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        
+        allowed_tools = []
+        
+        # 悪意のあるサーバー名
+        malicious_server_names = ["malicious-shadow-mcp-server"]
+        
+        # 安全なツールを収集
+        for server in config.get("mcp_servers", []):
+            if server.get("name") not in malicious_server_names:
+                for tool in server.get("tools", []):
+                    allowed_tools.append(tool.get("name"))
+        
+        return allowed_tools
+    except Exception as e:
+        print(f"設定ファイルの読み込みに失敗しました: {e}")
+        # デフォルトの安全なツールリスト
+        return [
+            "json_parser", "csv_converter", "data_validator",
+            "weather_forecast", "news_api", "stock_price",
+            "system_status", "process_info"
+        ]
+
+
+def get_allowed_tools_topic_policy_config(allowed_tools: List[str]) -> Dict:
+    """許可ツールリストのみの拒否トピック設定を取得する
+
+    Args:
+        allowed_tools: 許可ツールリスト
+
+    Returns:
+        Dict: 拒否トピック設定
+    """
+    # 許可ツールリストのみの拒否トピック設定
+    allowed_tools_str = ", ".join(allowed_tools)
+    topic_policy_config = {
+        "topicsConfig": [
+            {
+                "name": "allowed-tools",
+                "type": "DENY",
+                "definition": f"このシステムでは、以下のツールのみが許可されています：{allowed_tools_str}。これ以外のツールの使用は禁止されています。",
+                "examples": [
+                    "ツールを使用してください"
+                ],
+                "inputEnabled": True,
+                "outputEnabled": True,
+                "inputAction": "BLOCK",
+                "outputAction": "BLOCK",
+            }
+        ],
+        "tierConfig": {
+            "tierName": "STANDARD",
+        }
+    }
+    
+    return topic_policy_config
+
+
+def get_minimal_content_filter_config() -> Dict:
+    """最小限のコンテンツフィルター設定を取得する
+    
+    少なくとも1つのフィルターの強度をNONE以外に設定する必要がある
+
+    Returns:
+        Dict: 最小限のコンテンツフィルター設定
+    """
+    return {
+        "filtersConfig": [
+            {
+                "type": "HATE",
+                "inputStrength": "LOW",  # NONEからLOWに変更
+                "outputStrength": "NONE",
+                "inputModalities": ["TEXT"],
+                "outputModalities": ["TEXT"],
+                "inputAction": "BLOCK",
+                "outputAction": "BLOCK",
+                "inputEnabled": False,
+                "outputEnabled": False,
+            }
+        ],
+        "tierConfig": {
+            "tierName": "STANDARD",
+        }
+    }
+
+
+def get_minimal_contextual_grounding_policy_config() -> Dict:
+    """最小限のコンテキストグラウンディング設定を取得する
+
+    Returns:
+        Dict: 最小限のコンテキストグラウンディング設定
+    """
+    return {
+        "filtersConfig": [
+            {
+                "type": "GROUNDING",
+                "threshold": 0.8,
+                "enabled": False,
+                "action": "BLOCK"
+            }
+        ]
+    }
+
+
 def get_contextual_grounding_policy_config() -> Dict:
     """コンテキストグラウンディング設定を取得する
 
@@ -244,20 +363,33 @@ def get_contextual_grounding_policy_config() -> Dict:
     }
 
 
-def get_word_policy_config() -> Dict:
-    """単語フィルター設定を取得する
+def get_minimal_sensitive_information_policy_config() -> Dict:
+    """最小限の機密情報フィルター設定を取得する
 
     Returns:
-        Dict: 単語フィルター設定
+        Dict: 最小限の機密情報フィルター設定
     """
     return {
-        "managedWordListsConfig": [
+        "piiEntitiesConfig": [
             {
-                "type": "PROFANITY",
-                "inputEnabled": True,
-                "outputEnabled": True,
+                "type": "EMAIL",
+                "action": "BLOCK",
+                "inputEnabled": False,
+                "outputEnabled": False,
                 "inputAction": "BLOCK",
                 "outputAction": "BLOCK"
+            }
+        ],
+        "regexesConfig": [
+            {
+                "name": "minimal-regex",
+                "description": "最小限の正規表現",
+                "pattern": "dummy-pattern",
+                "action": "BLOCK",
+                "inputEnabled": False,
+                "outputEnabled": False,
+                "inputAction": "BLOCK",
+                "outputAction": "ANONYMIZE",
             }
         ]
     }
@@ -306,14 +438,6 @@ def get_sensitive_information_policy_config() -> Dict:
             },
             {
                 "type": "AGE",
-                "action": "BLOCK",
-                "inputEnabled": True,
-                "outputEnabled": True,
-                "inputAction": "BLOCK",
-                "outputAction": "BLOCK"
-            },
-            {
-                "type": "DATE_OF_BIRTH",
                 "action": "BLOCK",
                 "inputEnabled": True,
                 "outputEnabled": True,
@@ -397,7 +521,7 @@ def get_sensitive_information_policy_config() -> Dict:
                 "outputAction": "BLOCK"
             },
             {
-                "type": "US_DRIVING_LICENSE",
+                "type": "DRIVER_ID",
                 "action": "BLOCK",
                 "inputEnabled": True,
                 "outputEnabled": True,
@@ -506,16 +630,6 @@ def get_sensitive_information_policy_config() -> Dict:
                 "outputAction": "ANONYMIZE",
             },
             {
-                "name": "japanese-health-insurance-number",
-                "description": "日本の健康保険証番号パターンの検出",
-                "pattern": "\\d{8}",
-                "action": "BLOCK",
-                "inputEnabled": True,
-                "outputEnabled": True,
-                "inputAction": "BLOCK",
-                "outputAction": "ANONYMIZE",
-            },
-            {
                 "name": "japanese-bank-account",
                 "description": "日本の銀行口座番号パターンの検出",
                 "pattern": "\\d{7}|\\d{10}",
@@ -531,16 +645,6 @@ def get_sensitive_information_policy_config() -> Dict:
                 "name": "credit-card-number",
                 "description": "クレジットカード番号パターンの検出",
                 "pattern": "\\b(?:\\d[ -]*?){13,16}\\b",
-                "action": "BLOCK",
-                "inputEnabled": True,
-                "outputEnabled": True,
-                "inputAction": "BLOCK",
-                "outputAction": "ANONYMIZE",
-            },
-            {
-                "name": "cvv-code",
-                "description": "CVVコードパターンの検出",
-                "pattern": "\\b\\d{3,4}\\b",
                 "action": "BLOCK",
                 "inputEnabled": True,
                 "outputEnabled": True,
@@ -583,6 +687,44 @@ def get_sensitive_information_policy_config() -> Dict:
     }
 
 
+def get_minimal_word_policy_config() -> Dict:
+    """最小限の単語フィルター設定を取得する
+
+    Returns:
+        Dict: 最小限の単語フィルター設定
+    """
+    return {
+        "managedWordListsConfig": [
+            {
+                "type": "PROFANITY",
+                "inputEnabled": False,
+                "outputEnabled": False,
+                "inputAction": "BLOCK",
+                "outputAction": "BLOCK"
+            }
+        ]
+    }
+
+
+def get_word_policy_config() -> Dict:
+    """単語フィルター設定を取得する
+
+    Returns:
+        Dict: 単語フィルター設定
+    """
+    return {
+        "managedWordListsConfig": [
+            {
+                "type": "PROFANITY",
+                "inputEnabled": True,
+                "outputEnabled": True,
+                "inputAction": "BLOCK",
+                "outputAction": "BLOCK"
+            }
+        ]
+    }
+
+
 def get_basic_guardrail_config(strength: str = "HIGH") -> Dict:
     """基本的なガードレール設定を取得する
 
@@ -604,22 +746,31 @@ def get_basic_guardrail_config(strength: str = "HIGH") -> Dict:
     }
 
 
-def get_allowed_tools_guardrail_config(allowed_tools: List[str], strength: str = "HIGH") -> Dict:
+def get_allowed_tools_guardrail_config(allowed_tools: List[str] = None, strength: str = "HIGH") -> Dict:
     """許可ツールリストによる制限のガードレール設定を取得する
+    
+    他のポリシーと混在しないように、拒否トピックのみを含める
+    ただし、必須パラメータは最小限の設定で含める
+    
+    引数でallowed_toolsを与えない場合は、mcp_tools_config.jsonから安全なツールのリストを取得する
 
     Args:
-        allowed_tools: 許可ツールリスト
+        allowed_tools: 許可ツールリスト（指定しない場合はmcp_tools_config.jsonから取得）
         strength: フィルター強度 ("NONE", "LOW", "MEDIUM", "HIGH")
 
     Returns:
         Dict: ガードレール設定
     """
+    # 許可ツールリストが指定されていない場合は、mcp_tools_config.jsonから取得
+    if allowed_tools is None:
+        allowed_tools = get_allowed_tools_from_config()
+    
     return {
-        "contentPolicyConfig": get_content_filter_config(strength),
-        "topicPolicyConfig": get_topic_policy_config(allowed_tools),
-        "contextualGroundingPolicyConfig": get_contextual_grounding_policy_config(),
-        "wordPolicyConfig": get_word_policy_config(),
-        "sensitiveInformationPolicyConfig": get_sensitive_information_policy_config(),
+        "contentPolicyConfig": get_minimal_content_filter_config(),
+        "topicPolicyConfig": get_allowed_tools_topic_policy_config(allowed_tools),
+        "contextualGroundingPolicyConfig": get_minimal_contextual_grounding_policy_config(),
+        "wordPolicyConfig": get_minimal_word_policy_config(),
+        "sensitiveInformationPolicyConfig": get_minimal_sensitive_information_policy_config(),
         "crossRegionConfig": {
             "guardrailProfileIdentifier": "us.guardrail.v1:0"
         }

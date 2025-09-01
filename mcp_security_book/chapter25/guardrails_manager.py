@@ -21,7 +21,9 @@ from dotenv import load_dotenv
 from utils.filter_configs import (
     get_basic_guardrail_config,
     get_allowed_tools_guardrail_config,
+    get_allowed_tools_from_config,
 )
+from utils.tool_detection import run_tool_detection_test, print_analysis_report
 
 # 環境変数の読み込み
 load_dotenv()
@@ -190,11 +192,11 @@ class GuardrailsManager:
             
         return guardrail_id
 
-    def create_allowed_tools_guardrail(self, allowed_tools: List[str]) -> str:
+    def create_allowed_tools_guardrail(self) -> str:
         """許可ツールリストによる制限のガードレールを作成する
-
-        Args:
-            allowed_tools: 許可ツールリスト
+        
+        mcp_tools_config.jsonから安全なツールのリストを取得し、
+        それ以外のツールを拒否するガードレールを作成する
 
         Returns:
             str: ガードレール ID
@@ -203,11 +205,12 @@ class GuardrailsManager:
         timestamp = int(time.time())
         
         # 許可ツールリストによる制限のガードレール設定を取得
-        config = get_allowed_tools_guardrail_config(allowed_tools)
+        # 引数を指定しないことで、mcp_tools_config.jsonから安全なツールのリストを取得する
+        config = get_allowed_tools_guardrail_config()
         
         # 名前と説明を設定
         config["name"] = f"allowed-tools-guardrail-{timestamp}"
-        config["description"] = "許可ツールリストによる制限のガードレール"
+        config["description"] = "許可ツールリストによる制限のガードレール（mcp_tools_config.jsonから安全なツールのリストを取得）"
         
         guardrail_id = self.create_guardrail(config)
         
@@ -314,8 +317,29 @@ class GuardrailsManager:
         # テストケースの読み込み
         try:
             with open(test_cases_file, "r", encoding="utf-8") as f:
-                test_cases = json.load(f)
-            logger.info(f"テストケースを読み込みました: {len(test_cases)} 件")
+                file_content = json.load(f)
+            
+            # ファイル形式のチェック
+            if isinstance(file_content, list):
+                # 配列形式の場合はテストケースとして処理
+                test_cases = file_content
+                logger.info(f"テストケースを読み込みました: {len(test_cases)} 件")
+            elif isinstance(file_content, dict):
+                # オブジェクト形式の場合はエラーメッセージを表示
+                logger.error(f"ファイル {test_cases_file} はテストケース形式ではありません。テストケースファイルは配列形式である必要があります。")
+                return {
+                    "error": f"ファイル {test_cases_file} はテストケース形式ではありません。テストケースファイルは配列形式である必要があります。",
+                    "file_format": "object",
+                    "expected_format": "array"
+                }
+            else:
+                # その他の形式の場合もエラーメッセージを表示
+                logger.error(f"ファイル {test_cases_file} は無効な形式です。JSONの配列形式である必要があります。")
+                return {
+                    "error": f"ファイル {test_cases_file} は無効な形式です。JSONの配列形式である必要があります。",
+                    "file_format": str(type(file_content)),
+                    "expected_format": "array"
+                }
         except Exception as e:
             logger.error(f"テストケースの読み込みに失敗しました: {e}")
             return {"error": str(e)}
@@ -479,12 +503,15 @@ def main():
     # ガードレール操作
     parser.add_argument("--list", action="store_true", help="ガードレールの一覧を表示")
     parser.add_argument("--create-basic", action="store_true", help="基本的なガードレールを作成")
-    parser.add_argument("--create-allowed-tools", help="許可ツールリストによる制限のガードレールを作成（カンマ区切りのツールリスト）")
+    parser.add_argument("--create-allowed-tools", action="store_true", help="許可ツールリストによる制限のガードレールを作成（mcp_tools_config.jsonから安全なツールのリストを取得）")
     parser.add_argument("--delete", help="ガードレールを削除（ガードレール ID）")
     
     # テスト実行
     parser.add_argument("--test", help="テストを実行（ガードレール ID または 'basic', 'allowed_tools' などのタイプ。指定しない場合は guardrail_ids.json から 'test' タイプのIDを使用）")
-    parser.add_argument("--test-cases", help="テストケースファイルのパス", default="data/japanese_test_cases.json")
+    parser.add_argument("--test-case", "--test-cases", dest="test_cases", help="テストケースファイルのパス", default="data/japanese_test_cases.json")
+    parser.add_argument("--test-prompt", help="システムプロンプトファイルのパス（指定した場合、プロンプト内のMCPツール定義をテスト）")
+    parser.add_argument("--test-tool-detection", action="store_true", help="ツール検出テストを実行する")
+    parser.add_argument("--max-chars", type=int, help="出力する説明文の最大文字数", default=500)
     parser.add_argument("--output", help="出力ファイルのパス", default="test_results.json")
     parser.add_argument("--debug", action="store_true", help="デバッグモードを有効にする")
     parser.add_argument("--verbose", action="store_true", help="詳細な出力を表示する")
@@ -520,9 +547,10 @@ def main():
         else:
             print("ガードレールの作成に失敗しました")
     elif args.create_allowed_tools:
-        allowed_tools = args.create_allowed_tools.split(",")
-        guardrail_id = manager.create_allowed_tools_guardrail(allowed_tools)
+        guardrail_id = manager.create_allowed_tools_guardrail()
         if guardrail_id:
+            # 安全なツールのリストを取得して表示
+            allowed_tools = get_allowed_tools_from_config()
             print(f"許可ツールリストによる制限のガードレールを作成しました: {guardrail_id}")
             print(f"許可ツール: {', '.join(allowed_tools)}")
         else:
@@ -533,7 +561,61 @@ def main():
             print(f"ガードレールを削除しました: {args.delete}")
         else:
             print(f"ガードレールの削除に失敗しました: {args.delete}")
-    elif args.test is not None or os.path.exists("guardrail_ids.json"):
+    elif args.test_tool_detection:
+        guardrail_id = args.test
+        
+        # guardrail_ids.json からガードレールIDを取得
+        if guardrail_id is None or guardrail_id in ["basic", "test", "allowed_tools"]:
+            policy_type = guardrail_id if guardrail_id else "test"
+            try:
+                if os.path.exists("guardrail_ids.json"):
+                    with open("guardrail_ids.json", "r", encoding="utf-8") as f:
+                        guardrail_ids = json.load(f)
+                    
+                    if policy_type in guardrail_ids:
+                        guardrail_id = guardrail_ids[policy_type]
+                        print(f"{policy_type} タイプのガードレールIDを guardrail_ids.json から取得しました: {guardrail_id}")
+                    else:
+                        print(f"エラー: guardrail_ids.json に {policy_type} タイプのガードレールIDが見つかりません")
+                        return
+                else:
+                    print("エラー: guardrail_ids.json が見つかりません")
+                    return
+            except Exception as e:
+                print(f"エラー: guardrail_ids.json の読み込みに失敗しました: {e}")
+                return
+        
+        # テスト実行前にガードレールIDを保存
+        manager.save_guardrail_id(guardrail_id, policy_type="test")
+        
+        # 現在のディレクトリを基準にパスを設定
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # テスト実行前の情報表示
+        print(f"ガードレールID: {guardrail_id}")
+        print(f"最大文字数: {args.max_chars}")
+        print(f"デバッグモード: {'有効' if args.debug else '無効'}")
+        print(f"詳細モード: {'有効' if args.verbose else '無効'}")
+        print("ツール検出テストを開始します...")
+        
+        # ツール検出テストを実行
+        analysis = run_tool_detection_test(
+            base_dir,
+            manager,
+            guardrail_id,
+            args.max_chars,
+            args.debug or args.verbose
+        )
+        
+        if "error" in analysis:
+            print(f"テストの実行に失敗しました: {analysis['error']}")
+        else:
+            # 分析結果を表示
+            print_analysis_report(analysis)
+    
+    elif args.test_prompt:
+        print("この機能は現在サポートされていません。")
+    elif args.test or args.test_cases:
         guardrail_id = args.test
         
         # guardrail_ids.json からガードレールIDを取得
@@ -590,19 +672,23 @@ def main():
         parser.print_help()
         print("\n使用例:")
         print("  # ガードレールの一覧を表示")
-        print("  python guardrails_manager.py --list")
+        print("  uv run guardrails_manager.py --list")
         print("\n  # 基本的なガードレールを作成")
-        print("  python guardrails_manager.py --create-basic")
+        print("  uv run guardrails_manager.py --create-basic")
         print("\n  # 許可ツールリストによる制限のガードレールを作成")
-        print("  python guardrails_manager.py --create-allowed-tools calculator,weather,search")
+        print("  uv run guardrails_manager.py --create-allowed-tools")
         print("\n  # テストを実行（ガードレールIDを指定）")
-        print("  python guardrails_manager.py --test your-guardrail-id --test-cases data/japanese_test_cases.json")
+        print("  uv run guardrails_manager.py --test your-guardrail-id --test-cases data/japanese_test_cases.json")
         print("\n  # テストを実行（guardrail_ids.json から 'test' タイプのIDを使用）")
-        print("  python guardrails_manager.py --test-cases data/japanese_test_cases.json")
+        print("  uv run guardrails_manager.py --test-cases data/japanese_test_cases.json")
         print("\n  # テストを実行（guardrail_ids.json から 'basic' タイプのIDを使用）")
-        print("  python guardrails_manager.py --test basic --test-cases data/japanese_test_cases.json")
+        print("  uv run guardrails_manager.py --test basic --test-cases data/japanese_test_cases.json")
+        print("\n  # システムプロンプトのMCPツール定義をテスト")
+        print("  uv run guardrails_manager.py --test-prompt path/to/system_prompt.md --test allowed_tools")
+        print("\n  # ツール検出テストを実行")
+        print("  uv run guardrails_manager.py --test-tool-detection --test allowed_tools")
         print("\n  # ガードレールを削除")
-        print("  python guardrails_manager.py --delete your-guardrail-id")
+        print("  uv run guardrails_manager.py --delete your-guardrail-id")
 
 
 if __name__ == "__main__":
