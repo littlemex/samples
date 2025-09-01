@@ -19,15 +19,25 @@ Amazon Bedrock Guardrails のコンテンツフィルター、拒否トピック
 
 ## ディレクトリ構成
 
+一部演習に不要なため除外したファイルがあります。
+
 ```
 chapter25/
-├── data/                      # テストケースなどのデータファイル
-│   └── *.json                 # テストケース
-├── utils/                     # ユーティリティモジュール
-│   ├── __init__.py            # パッケージ初期化ファイル
-│   └── filter_configs.py      # フィルター設定モジュール
-├── guardrails_manager.py      # ガードレール管理クラス
-└── README.md                  # このファイル
+├── data/                              # テストケースなどのデータファイル
+│   ├── attack_prompts.json            # 攻撃パターンのテストケース
+│   ├── japanese_test_cases.json       # 日本語テストケース
+│   ├── mcp_tools_config.json          # MCPツール設定
+│   ├── pii_filter_test_cases.json     # 個人情報フィルターテストケース
+│   └── tool_shadowing_test_cases.json # ツールシャドウイングテストケース
+├── README.md
+├── guardrails_manager.py              # ガードレール管理クラスと実行スクリプト
+├── pyproject.toml
+├── utils/                             # ユーティリティモジュール
+│   ├── __init__.py
+│   ├── filter_configs.py              # フィルター設定モジュール
+│   ├── tool_detection.py              # ツール検出テストモジュール
+│   └── topic_only_guardrail.py        # トピックのみのガードレール作成モジュール
+└── uv.lock
 ```
 
 ## 手順
