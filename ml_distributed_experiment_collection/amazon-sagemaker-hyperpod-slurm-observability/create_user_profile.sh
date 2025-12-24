@@ -112,19 +112,19 @@ else
             --document-name AWS-StartInteractiveCommand \
             --parameters "{\"command\":[\"sudo useradd -u $STUDIO_UID -g $STUDIO_GID -m -s /bin/bash studio-user 2>/dev/null || true\"]}" > /dev/null 2>&1
             
-        # FSx ディレクトリの権限設定
-        echo "  FSx ディレクトリの権限設定中..."
+        # FSx 共有ディレクトリの権限設定
+        echo "  FSx 共有ディレクトリの権限設定中..."
         aws ssm start-session \
             --target "$SSM_TARGET" \
             --region "$REGION" \
             --document-name AWS-StartInteractiveCommand \
-            --parameters "{\"command\":[\"sudo mkdir -p /fsx/studio-workspace\"]}" > /dev/null 2>&1
+            --parameters "{\"command\":[\"sudo mkdir -p /fsx/shared/studio-workspace\"]}" > /dev/null 2>&1
             
         aws ssm start-session \
             --target "$SSM_TARGET" \
             --region "$REGION" \
             --document-name AWS-StartInteractiveCommand \
-            --parameters "{\"command\":[\"sudo chown $STUDIO_UID:$STUDIO_GID /fsx/studio-workspace\"]}" > /dev/null 2>&1
+            --parameters "{\"command\":[\"sudo chown $STUDIO_UID:$STUDIO_GID /fsx/shared/studio-workspace\"]}" > /dev/null 2>&1
         
         echo "  ✅ HyperPod 側の設定完了"
     else
@@ -224,15 +224,15 @@ echo "Current User: $(id)"
 echo "FSx Root Directory:"
 ls -la "$FSX_MOUNT"
 
-# 書き込みテスト
-TEST_DIR="$FSX_MOUNT/studio-workspace"
+# 書き込みテスト（共有ディレクトリ使用）
+TEST_DIR="$FSX_MOUNT/shared/studio-workspace"
 TEST_FILE="$TEST_DIR/test-$(date +%s).txt"
 
 echo ""
 echo "書き込みテスト開始..."
 
 if [[ -d "$TEST_DIR" ]]; then
-    echo "✅ studio-workspace ディレクトリが存在します"
+    echo "✅ shared/studio-workspace ディレクトリが存在します"
     
     if touch "$TEST_FILE" 2>/dev/null; then
         echo "✅ ファイル作成成功: $TEST_FILE"
@@ -283,7 +283,8 @@ if [[ "${SKIP_HYPERPOD_SETUP:-false}" == "true" ]]; then
     echo "ssh hyperpod-login"
     echo "sudo groupadd -g $STUDIO_GID studio-group"
     echo "sudo useradd -u $STUDIO_UID -g $STUDIO_GID -m studio-user" 
-    echo "sudo chown $STUDIO_UID:$STUDIO_GID /fsx/studio-workspace"
+    echo "sudo mkdir -p /fsx/shared/studio-workspace"
+    echo "sudo chown $STUDIO_UID:$STUDIO_GID /fsx/shared/studio-workspace"
     echo ""
 fi
 

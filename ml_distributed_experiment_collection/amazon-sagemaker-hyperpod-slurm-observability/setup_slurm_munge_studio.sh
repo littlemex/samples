@@ -71,17 +71,27 @@ echo ""
 echo "=== Step 5: SSM 接続確認 ==="
 SSM_TARGET="sagemaker-cluster:${CLUSTER_ID}_${HEAD_NODE_NAME}-${CONTROLLER_ID}"
 echo "SSM Target: $SSM_TARGET"
-echo "接続テストを実行中..."
+echo "接続テストを実行中（30秒タイムアウト）..."
 
-timeout 15s aws ssm start-session \
-    --target "$SSM_TARGET" \
-    --document-name AWS-StartInteractiveCommand \
-    --parameters '{"command":["echo SSM connection test successful"]}' > /dev/null 2>&1
+# SSM接続テストのステータスチェック
+timeout 30s bash -c "
+    aws ssm start-session \
+        --target '$SSM_TARGET' \
+        --document-name AWS-StartInteractiveCommand \
+        --parameters '{\"command\":[\"echo SSM connection test successful\"]}' 2>&1 | \
+    grep -q 'SSM connection test successful'
+"
 
-if [ $? -eq 0 ]; then
+SSM_EXIT_CODE=$?
+if [ $SSM_EXIT_CODE -eq 0 ]; then
     echo "✅ SSM接続確認成功"
+elif [ $SSM_EXIT_CODE -eq 124 ]; then
+    echo "⚠️  SSM接続がタイムアウトしました（30秒）"
+    echo "ネットワークまたはSSM Agentの確認が必要です"
+    exit 1
 else
     echo "❌ SSM接続に失敗しました。ターゲットを確認してください"
+    echo "SSM Target: $SSM_TARGET"
     exit 1
 fi
 
@@ -226,4 +236,3 @@ echo "  ps aux | grep munge"
 echo "  sinfo"
 echo "  squeue"
 echo "=============================================="
-
