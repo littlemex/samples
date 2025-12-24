@@ -7,7 +7,7 @@ set -euo pipefail
 
 # 設定変数
 DOMAIN_NAME="hyperpod-studio-integration"  # CloudFormation スタック名と同じ
-USER_PROFILE_NAME="ml-researcher2"  # 作成するユーザー名
+USER_PROFILE_NAME="ml-researcher"  # 作成するユーザー名
 REGION="us-east-1"  # 必要に応じて変更してください
 CLUSTER_NAME="cpu-slurm-cluster"  # HyperPod クラスター名
 HEAD_NODE_NAME="controller"
