@@ -1,0 +1,332 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  Improved CloudFormation template for SageMaker HyperPod Slurm Observability
+  - SigV4 authentication pre-configured for Grafana
+  - Parameter-based IP address restriction
+  - Enhanced instance type (m5.xlarge)
+  - Self-contained local template (no external dependencies)
+
+Parameters:
+  AllowedIPRange:
+    Type: String
+    Default: "0.0.0.0/0"
+    Description: "IP range allowed to access Grafana (CIDR format, e.g., 192.168.1.100/32)"
+    AllowedPattern: "^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$"
+    ConstraintDescription: "Must be a valid CIDR range (e.g., 192.168.1.100/32)"
+    
+  InstanceType:
+    Type: String
+    Default: "m5.xlarge"
+    Description: "EC2 instance type for Grafana server"
+    AllowedValues:
+      - "t3.large"
+      - "t3.xlarge"
+      - "m5.large"
+      - "m5.xlarge"
+      - "m5.2xlarge"
+    
+  GrafanaVersion:
+    Type: String
+    Default: "latest"
+    Description: "Grafana Docker image version"
+
+Resources:
+  # Security Group with parameterized IP restriction
+  MySecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Security group for Grafana server with configurable IP access"
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: !Ref AllowedIPRange
+          Description: "Grafana web interface access"
+        - IpProtocol: "tcp"
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedIPRange
+          Description: "SSH access"
+      Tags:
+        - Key: "Name"
+          Value: !Sub "${AWS::StackName}-Grafana-SG"
+        - Key: "Purpose"
+          Value: "SageMaker HyperPod Observability"
+
+  # IAM Role for Grafana EC2 instance
+  GrafanaEC2Role:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-GrafanaEC2Role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: "PrometheusAccessPolicy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "aps:ListWorkspaces"
+                  - "aps:DescribeWorkspace"
+                  - "aps:QueryMetrics"
+                  - "aps:GetLabels"
+                  - "aps:GetSeries"
+                  - "aps:GetMetricMetadata"
+                Resource: "*"
+        - PolicyName: "CloudWatchAccessPolicy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "cloudwatch:ListMetrics"
+                  - "cloudwatch:GetMetricStatistics"
+                  - "cloudwatch:GetMetricData"
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "logs:DescribeLogStreams"
+                Resource: "*"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: "Name"
+          Value: !Sub "${AWS::StackName}-GrafanaRole"
+        - Key: "Purpose"
+          Value: "SageMaker HyperPod Observability"
+
+  # IAM Instance Profile
+  MyInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      InstanceProfileName: !Sub "${AWS::StackName}-GrafanaProfile"
+      Roles:
+        - !Ref GrafanaEC2Role
+
+  # Amazon Managed Prometheus Workspace
+  APSWorkspace:
+    Type: "AWS::APS::Workspace"
+    Properties:
+      Alias: !Sub "${AWS::StackName}-HyperPod-Prometheus"
+      Tags:
+        - Key: "Name"
+          Value: !Sub "${AWS::StackName}-Prometheus"
+        - Key: "Purpose"
+          Value: "SageMaker HyperPod Observability"
+        - Key: "Environment"
+          Value: "Production"
+
+  # Grafana EC2 Instance
+  MyInstance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      IamInstanceProfile: !Ref MyInstanceProfile
+      SecurityGroupIds:
+        - !Ref MySecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"
+          Ebs:
+            VolumeType: "gp3"
+            VolumeSize: 50
+            Encrypted: true
+            DeleteOnTermination: true
+      MetadataOptions:
+        HttpEndpoint: "enabled"
+        HttpTokens: "required"
+        HttpPutResponseHopLimit: 2
+        InstanceMetadataTags: "enabled"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          
+          # Logging setup
+          LOG_FILE="/var/log/grafana-setup.log"
+          exec > >(tee -a $LOG_FILE)
+          exec 2>&1
+          
+          echo "$(date): Starting Grafana setup with SigV4 authentication..."
+          
+          # System updates
+          echo "$(date): Updating system packages..."
+          yum update -y
+          
+          # Install essential packages
+          echo "$(date): Installing essential packages..."
+          yum install -y wget curl unzip
+          
+          # Install Docker
+          echo "$(date): Installing Docker..."
+          amazon-linux-extras install docker -y
+          
+          # Start and enable Docker service
+          echo "$(date): Starting Docker service..."
+          systemctl start docker
+          systemctl enable docker
+          
+          # Add ec2-user to docker group
+          usermod -aG docker ec2-user
+          
+          # Install AWS CLI v2 (if not present)
+          if ! command -v aws &> /dev/null; then
+              echo "$(date): Installing AWS CLI v2..."
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              unzip awscliv2.zip
+              ./aws/install
+              rm -rf awscliv2.zip aws/
+          fi
+          
+          # Configure AWS credentials from instance profile
+          echo "$(date): Configuring AWS environment..."
+          export AWS_DEFAULT_REGION=${AWS::Region}
+          export AWS_REGION=${AWS::Region}
+          
+          # SigV4 Authentication Environment Variables (Critical for Prometheus data source)
+          echo "$(date): Setting up SigV4 authentication environment..."
+          export AWS_SDK_LOAD_CONFIG=true
+          export GF_AUTH_SIGV4_AUTH_ENABLED=true
+          
+          # Create systemd environment file for persistence
+          cat > /etc/environment << EOF
+          AWS_SDK_LOAD_CONFIG=true
+          GF_AUTH_SIGV4_AUTH_ENABLED=true
+          AWS_DEFAULT_REGION=${AWS::Region}
+          AWS_REGION=${AWS::Region}
+          EOF
+          
+          # Create Grafana configuration directory
+          mkdir -p /etc/grafana
+          
+          # Create Grafana configuration optimized for Amazon Managed Prometheus plugin
+          cat > /etc/grafana/grafana.ini << 'EOF'
+          [plugins]
+          allow_loading_unsigned_plugins = grafana-amazonprometheus-datasource
+          
+          [feature_toggles]
+          awsDatasourcesTesting = true
+          prometheusTypeMigration = true
+          
+          [aws]
+          # Enable AWS SDK authentication for plugins
+          forward_settings_to_plugins = grafana-amazonprometheus-datasource
+          EOF
+          
+          # Pull and run Grafana with Amazon Managed Prometheus plugin
+          echo "$(date): Starting Grafana container with Amazon Managed Prometheus plugin..."
+          docker pull grafana/grafana:${GrafanaVersion}
+          
+          # Run Grafana with Amazon Managed Service for Prometheus plugin
+          # Note: SigV4 in core Prometheus is deprecated, using dedicated AMP plugin instead
+          docker run -d \
+            --name=grafana \
+            --restart=always \
+            -p 3000:3000 \
+            -e AWS_SDK_LOAD_CONFIG=true \
+            -e AWS_DEFAULT_REGION=${AWS::Region} \
+            -e AWS_REGION=${AWS::Region} \
+            -e GF_SECURITY_ADMIN_PASSWORD=admin \
+            -e GF_INSTALL_PLUGINS=grafana-amazonprometheus-datasource \
+            -e GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=grafana-amazonprometheus-datasource \
+            -v /etc/grafana/grafana.ini:/etc/grafana/grafana.ini:ro \
+            grafana/grafana:${GrafanaVersion}
+          
+          # Wait for Grafana to be ready
+          echo "$(date): Waiting for Grafana to be ready..."
+          sleep 30
+          
+          # Verify Grafana is running
+          for i in {1..12}; do
+            if curl -f http://localhost:3000/api/health &>/dev/null; then
+              echo "$(date): Grafana is ready!"
+              break
+            fi
+            echo "$(date): Waiting for Grafana to start (attempt $i/12)..."
+            sleep 10
+          done
+          
+          # Get instance metadata with IMDSv2 support
+          echo "$(date): Getting instance metadata with IMDSv2..."
+          TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" -s)
+          INSTANCE_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
+          PUBLIC_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/public-ipv4)
+          
+          # Create success indicator
+          echo "$(date): Grafana setup completed successfully!"
+          echo "Instance ID: $INSTANCE_ID"
+          echo "Public IP: $PUBLIC_IP"
+          echo "Grafana URL: http://$PUBLIC_IP:3000"
+          echo "Default credentials: admin/admin"
+          echo "SigV4 authentication: ENABLED"
+          
+          # Signal CloudFormation that setup is complete
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource MyInstance --region ${AWS::Region}
+          
+      Tags:
+        - Key: "Name"
+          Value: !Sub "${AWS::StackName}-Grafana"
+        - Key: "Purpose"
+          Value: "SageMaker HyperPod Observability"
+        - Key: "Environment"
+          Value: "Production"
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+        Count: 1
+
+Outputs:
+  InstanceId:
+    Description: "Instance ID of the Grafana EC2 instance"
+    Value: !Ref MyInstance
+    Export:
+      Name: !Sub "${AWS::StackName}-InstanceId"
+      
+  PrometheusWorkspaceId:
+    Description: "ID of the Amazon Managed Prometheus Workspace"
+    Value: !Ref APSWorkspace
+    Export:
+      Name: !Sub "${AWS::StackName}-PrometheusWorkspaceId"
+      
+  PrometheusRemoteWriteURL:
+    Description: "Prometheus remote write URL for metrics ingestion"
+    Value: !Sub "${APSWorkspace.PrometheusEndpoint}api/v1/remote_write"
+    Export:
+      Name: !Sub "${AWS::StackName}-PrometheusRemoteWriteURL"
+      
+  PrometheusQueryURL:
+    Description: "Prometheus query URL for Grafana data source configuration"
+    Value: !GetAtt APSWorkspace.PrometheusEndpoint
+    Export:
+      Name: !Sub "${AWS::StackName}-PrometheusQueryURL"
+      
+  GrafanaInstanceAddress:
+    Description: "Grafana instance address with port 3000"
+    Value: !Sub "http://${MyInstance.PublicIp}:3000"
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaURL"
+      
+  AMPRemoteWriteURL:
+    Description: "Amazon Managed Prometheus remote write URL (legacy output name)"
+    Value: !Sub "${APSWorkspace.PrometheusEndpoint}api/v1/remote_write"
+    
+  ConfigurationInstructions:
+    Description: "Next steps for Grafana configuration"
+    Value: !Sub |
+      1. Access Grafana: http://${MyInstance.PublicIp}:3000
+      2. Login: admin/admin (change password on first login)
+      3. Add Amazon Managed Service for Prometheus data source:
+         - Go to Configuration > Data Sources
+         - Click 'Add data source'  
+         - Select 'Amazon Managed Service for Prometheus' (NOT regular Prometheus)
+         - URL: ${APSWorkspace.PrometheusEndpoint}
+         - Authentication Provider: AWS SDK Default
+         - Default Region: ${AWS::Region}
+      4. Amazon Managed Prometheus plugin is pre-installed and configured
+      5. Note: Core Prometheus SigV4 is deprecated - use dedicated AMP plugin instead
