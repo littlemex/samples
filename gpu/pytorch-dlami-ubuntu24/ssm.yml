@@ -1,0 +1,288 @@
+Description: SSM Document for code-server instance
+
+Parameters:
+  CodeServerUser:
+    Type: String
+    Description: UserName for code-server
+  HomeFolder:
+    Type: String
+    Description: Folder to open in code-server
+  CodeServerInstance:
+    Type: String
+    Description: ID of the EC2 instance running code-server
+  AssetZipS3Path:
+    Type: String
+    Description: S3 URL for the assets zip file
+    Default: ""
+
+Resources:
+  CodeServerSSMDoc:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Command
+      Content:
+        schemaVersion: '2.2'
+        description: Bootstrap code-server instance
+        parameters:
+          CodeServerPassword:
+            type: String
+            default: !Ref AWS::StackId
+        # all mainSteps scripts are in in /var/lib/amazon/ssm/<instanceid>/document/orchestration/<uuid>/<StepName>/_script.sh
+        mainSteps:
+          - name: InstallCloudWatchAgent
+            action: aws:configurePackage
+            inputs:
+              name: AmazonCloudWatchAgent
+              action: Install
+          - name: ConfigureCloudWatchAgent
+            action: aws:runDocument
+            inputs:
+              documentType: SSMDocument
+              documentPath: AmazonCloudWatch-ManageAgent
+              documentParameters:
+                action: configure
+                mode: ec2
+                optionalConfigurationSource: default
+                optionalRestart: 'yes'
+          - name: InstallAptPackagesApt
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - '#!/bin/bash'
+                - dpkg --configure -a
+                - sed -i 's/#$nrconf{kernelhints} = -1;/$nrconf{kernelhints} = 0;/' /etc/needrestart/needrestart.conf
+                - sed -i 's/#$nrconf{verbosity} = 2;/$nrconf{verbosity} = 0;/' /etc/needrestart/needrestart.conf
+                - sed -i "s/#\$nrconf{restart} = 'i';/\$nrconf{restart} = 'a';/" /etc/needrestart/needrestart.conf
+                - echo "Apt helper packages added. Checking configuration"
+                - cat /etc/needrestart/needrestart.conf
+          - name: InstallBasePackagesApt
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - '#!/bin/bash'
+                - echo "Waiting for dpkg lock to be released..."
+                - |
+                  # Wait for dpkg lock to be released (max 5 minutes)
+                  timeout=300
+                  elapsed=0
+                  while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+                        sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+                        sudo fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
+                    if [ $elapsed -ge $timeout ]; then
+                      echo "Timeout waiting for dpkg lock"
+                      break
+                    fi
+                    echo "Waiting for dpkg lock... ($elapsed seconds)"
+                    sleep 5
+                    elapsed=$((elapsed + 5))
+                  done
+                - dpkg --configure -a
+                - apt-get -q update
+                - DEBIAN_FRONTEND=noninteractive apt-get install -y -q curl gnupg whois argon2 unzip nginx openssl locales locales-all apt-transport-https ca-certificates software-properties-common python3-pip nodejs npm graphviz jq
+                - echo "Base packages installed successfully"
+          - name: AddUserApt
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - '#!/bin/bash'
+                - dpkg --configure -a
+                - !Sub |
+                  if [[ "${CodeServerUser}" == "ubuntu" ]]
+                  then
+                    echo 'Using existing user: ${CodeServerUser}'
+                  else
+                    echo 'Adding user: ${CodeServerUser}'
+                    adduser --disabled-password --gecos '' ${CodeServerUser}
+                    echo "${CodeServerUser}:{{ CodeServerPassword }}" | chpasswd
+                    usermod -aG sudo ${CodeServerUser}
+                  fi
+                - !Sub |
+                  tee /etc/sudoers.d/91-vscode-user <<EOF
+                  ${CodeServerUser} ALL=(ALL) NOPASSWD:ALL
+                  EOF
+                - !Sub mkdir -p /home/${CodeServerUser} && chown -R ${CodeServerUser}:${CodeServerUser} /home/${CodeServerUser}
+                - !Sub mkdir -p /home/${CodeServerUser}/.local/bin && chown -R ${CodeServerUser}:${CodeServerUser} /home/${CodeServerUser}
+                - echo "User added. Checking configuration"
+                - !Sub getent passwd ${CodeServerUser}
+          - name: UpdateProfile
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - '#!/bin/bash'
+                - echo LANG=en_US.utf-8 >> /etc/environment
+                - echo LC_ALL=en_US.UTF-8 >> /etc/environment
+                - !Sub echo 'PATH=$PATH:/home/${CodeServerUser}/.local/bin' >> /home/${CodeServerUser}/.bashrc
+                - !Sub echo 'export PATH' >> /home/${CodeServerUser}/.bashrc
+                - !Sub echo 'export AWS_REGION=${AWS::Region}' >> /home/${CodeServerUser}/.bashrc
+                - !Sub echo 'export AWS_ACCOUNTID=${AWS::AccountId}' >> /home/${CodeServerUser}/.bashrc
+                - !Sub echo 'export NEXT_TELEMETRY_DISABLED=1' >> /home/${CodeServerUser}/.bashrc
+                - !Sub echo "export PS1='\[\033[01;32m\]\u:\[\033[01;34m\]\w\[\033[00m\]\$ '" >> /home/${CodeServerUser}/.bashrc
+                - !Sub chown -R ${CodeServerUser}:${CodeServerUser} /home/${CodeServerUser}
+          - name: ConfigureCodeServer
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - '#!/bin/bash'
+                - !Sub export HOME=/home/${CodeServerUser}
+                - curl -fsSL https://code-server.dev/install.sh | bash -s -- 2>&1
+                - !Sub systemctl enable --now code-server@${CodeServerUser} 2>&1
+                - !Sub |
+                  tee /etc/nginx/conf.d/code-server.conf <<EOF
+                  server {
+                      listen 80;
+                      listen [::]:80;
+                      server_name *.cloudfront.net;
+                      location / {
+                        proxy_pass http://localhost:8080/;
+                        proxy_set_header Host \$host;
+                        proxy_set_header Upgrade \$http_upgrade;
+                        proxy_set_header Connection upgrade;
+                        proxy_set_header Accept-Encoding gzip;
+                      }
+                  }
+                  EOF
+                - !Sub mkdir -p /home/${CodeServerUser}/.config/code-server
+                - !Sub |
+                  tee /home/${CodeServerUser}/.config/code-server/config.yaml <<EOF
+                  cert: false
+                  auth: password
+                  hashed-password: "$(echo -n {{ CodeServerPassword }} | argon2 $(openssl rand -base64 12) -e)"
+                  EOF
+                - !Sub mkdir -p /home/${CodeServerUser}/.local/share/code-server/User/
+                - !Sub touch /home/${CodeServerUser}/.hushlogin
+                - !Sub mkdir -p ${HomeFolder} && chown -R ${CodeServerUser}:${CodeServerUser} ${HomeFolder}
+                - !Sub |
+                  tee /home/${CodeServerUser}/.local/share/code-server/User/settings.json <<EOF
+                  {
+                    "extensions.autoUpdate": false,
+                    "extensions.autoCheckUpdates": false,
+                    "telemetry.telemetryLevel": "off",
+                    "security.workspace.trust.startupPrompt": "never",
+                    "security.workspace.trust.enabled": false,
+                    "security.workspace.trust.banner": "never",
+                    "security.workspace.trust.emptyWindow": false,
+                    "auto-run-command.rules": [
+                      {
+                        "command": "workbench.action.terminal.new"
+                      }
+                    ]
+                  }
+                  EOF
+                - !Sub chown -R ${CodeServerUser}:${CodeServerUser} /home/${CodeServerUser}
+                - !Sub systemctl restart code-server@${CodeServerUser}
+                - systemctl restart nginx
+                - !Sub sudo -u ${CodeServerUser} --login code-server --install-extension AmazonWebServices.aws-toolkit-vscode --force
+                - !Sub sudo -u ${CodeServerUser} --login code-server --install-extension AmazonWebServices.amazon-q-vscode --force
+                - !Sub sudo -u ${CodeServerUser} --login code-server --install-extension saoudrizwan.claude-dev --force
+                - !Sub chown -R ${CodeServerUser}:${CodeServerUser} /home/${CodeServerUser}
+                - echo "Nginx installed. Checking configuration"
+                - nginx -t 2>&1
+                - systemctl status nginx
+                - echo "CodeServer installed. Checking configuration"
+                - code-server -v
+                - !Sub systemctl status code-server@${CodeServerUser}
+
+          - name: SetupCodeCommand
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - '#!/bin/bash'
+                - |
+                  cat > /usr/local/bin/code << EOF
+                  #!/bin/bash
+                  if [ "\$1" = "." ]; then
+                    current_dir=\$(pwd)
+                    /usr/bin/code-server \$current_dir
+                  elif [ -n "\$1" ]; then
+                    target=\$(realpath "\$1" 2>/dev/null || echo "\$1")
+                    /usr/bin/code-server \$target
+                  fi
+                  EOF
+                - chmod +x /usr/local/bin/code
+          - name: DownloadAndSetupAssets
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 2400
+              runCommand:
+                - '#!/bin/bash'
+                - !Sub |
+                  # Create workshop directory if it doesn't exist
+                  mkdir -p ${HomeFolder}
+                  chown -R ${CodeServerUser}:${CodeServerUser} ${HomeFolder}
+
+                  # Check if AssetZipS3Path is provided
+                  if [[ -z "${AssetZipS3Path}" ]]; then
+                    echo "No AssetZipS3Path provided. Skipping asset download."
+                    exit 0
+                  fi
+
+                  # Download assets directly from S3 URL
+                  echo "Downloading assets from: ${AssetZipS3Path}"
+                  if ! curl -L "${AssetZipS3Path}" -o /tmp/assets.zip; then
+                    echo "Failed to download assets. Skipping."
+                    exit 0
+                  fi
+
+                  # Verify the downloaded file
+                  if [[ ! -f /tmp/assets.zip ]] || [[ ! -s /tmp/assets.zip ]]; then
+                    echo "Downloaded file is empty or does not exist. Skipping."
+                    exit 0
+                  fi
+
+                  # Extract assets to the workshop directory
+                  if ! unzip -o /tmp/assets.zip -d ${HomeFolder}; then
+                    echo "Failed to extract assets. Skipping."
+                    rm -f /tmp/assets.zip
+                    exit 0
+                  fi
+
+                  rm -f /tmp/assets.zip
+                  chown -R ${CodeServerUser}:${CodeServerUser} ${HomeFolder}
+                  echo "Assets extracted to ${HomeFolder}"
+
+  # Install Workshop specific packages here
+  SSMDocLambdaRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: The Amazon EC2 ssm:*CommandInvocation API actions do not support resource-level permissions, so you cannot control which individual resources users can view in the console. Therefore, the * wildcard is necessary in the Resource element. See https://docs.aws.amazon.com/service-authorization/latest/reference/list_awssystemsmanager.html
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Sub lambda.${AWS::URLSuffix}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SSMDocOnEC2
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${CodeServerSSMDoc}
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/AmazonCloudWatch-ManageAgent
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${CodeServerInstance}
+              - Effect: Allow
+                Action:
+                  - ssm:ListCommandInvocations
+                  - ssm:GetCommandInvocation
+                Resource: '*'
+
+Outputs:
+  CodeServerSSMDocName:
+    Description: SSM Document name
+    Value: !Ref CodeServerSSMDoc

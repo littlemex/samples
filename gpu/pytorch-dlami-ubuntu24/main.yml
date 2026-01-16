@@ -1,0 +1,137 @@
+Description: Create a code-server instance with an Amazon CloudFront distribution for use in Workshop Studio. Version 5.1.1
+
+Parameters:
+  CodeServerUser:
+    Type: String
+    Description: UserName for code-server
+    Default: coder
+  InstanceName:
+    Type: String
+    Description: Code-server EC2 instance name
+    Default: CodeServer
+  InstanceVolumeSize:
+    Type: Number
+    Description: Code-server EC2 instance volume size in GB
+    Default: 200
+  InstanceType:
+    Description: Code-server EC2 instance type
+    Type: String
+    Default: g5.xlarge
+  InstanceOperatingSystem:
+    Description: Code-server EC2 operating system
+    Type: String
+    Default: Ubuntu-24
+    AllowedValues: ['Ubuntu-24']
+  HomeFolder:
+    Type: String
+    Description: Folder to open in code-server
+    Default: /work
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Instance Configuration
+        Parameters:
+          - InstanceName
+          - InstanceVolumeSize
+          - InstanceType
+          - InstanceOperatingSystem
+      - Label:
+          default: Code-server Configuration
+        Parameters:
+          - CodeServerUser
+          - HomeFolder
+    ParameterLabels:
+      CodeServerUser:
+        default: Code-server user name
+      InstanceName:
+        default: Instance name
+      InstanceVolumeSize:
+        default: Instance volume size
+      InstanceType:
+        default: Instance type
+      InstanceOperatingSystem:
+        default: Instance operating system
+      HomeFolder:
+        default: Code-server home folder
+
+Resources:
+  SecretsStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./secrets.yml
+      Parameters:
+        InstanceName: !Ref InstanceName
+        CodeServerUser: !Ref CodeServerUser
+
+  EC2Stack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./ec2.yml
+      Parameters:
+        InstanceName: !Ref InstanceName
+        InstanceVolumeSize: !Ref InstanceVolumeSize
+        InstanceType: !Ref InstanceType
+        InstanceOperatingSystem: !Ref InstanceOperatingSystem
+        CodeServerUser: !Ref CodeServerUser
+        HomeFolder: !Ref HomeFolder
+
+  SSMStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./ssm.yml
+      Parameters:
+        CodeServerUser: !Ref CodeServerUser
+        HomeFolder: !Ref HomeFolder
+        CodeServerInstance: !GetAtt EC2Stack.Outputs.CodeServerInstanceId
+        AssetZipS3Path: ""
+
+  LambdaStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./lambda.yml
+      Parameters:
+        CodeServerSSMDocName: !GetAtt SSMStack.Outputs.CodeServerSSMDocName
+        CodeServerInstanceId: !GetAtt EC2Stack.Outputs.CodeServerInstanceId
+    DependsOn:
+      - SSMStack
+      - EC2Stack
+
+  CloudFrontStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./cloudfront.yml
+      Parameters:
+        InstanceName: !Ref InstanceName
+        CodeServerInstancePublicDnsName: !GetAtt EC2Stack.Outputs.CodeServerInstancePublicDnsName
+    DependsOn:
+      - EC2Stack
+
+  CustomStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./custom.yml
+      Parameters:
+        CodeServerInstanceId: !GetAtt EC2Stack.Outputs.CodeServerInstanceId
+        CodeServerSSMDocName: !GetAtt SSMStack.Outputs.CodeServerSSMDocName
+        RunSSMDocLambdaArn: !GetAtt LambdaStack.Outputs.RunSSMDocLambdaArn
+        CodeServerHealthCheckLambdaArn: !GetAtt LambdaStack.Outputs.CodeServerHealthCheckLambdaArn
+        CheckSSMDocLambdaArn: !GetAtt LambdaStack.Outputs.CheckSSMDocLambdaArn
+        CloudFrontDomainName: !GetAtt CloudFrontStack.Outputs.CloudFrontDomainName
+        Password: !GetAtt SecretsStack.Outputs.Password
+        HomeFolder: !Ref HomeFolder
+    DependsOn:
+      - EC2Stack
+      - SSMStack
+      - LambdaStack
+      - CloudFrontStack
+      - SecretsStack
+
+Outputs:
+  URL:
+    Description: Code-server URL
+    Value: !GetAtt CustomStack.Outputs.URL
+  Password:
+    Description: Code-server Password
+    Value: !GetAtt SecretsStack.Outputs.Password
