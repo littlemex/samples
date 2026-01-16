@@ -1,0 +1,10 @@
+# Core dependencies for vLLM benchmarking
+mlflow>=2.10.0
+numpy>=1.24.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Note: vLLM itself should be installed separately
+# For GPU: pip install vllm
+# For Neuron: pip install --extra-index-url=https://pip.repos.neuron.amazonaws.com vllm-neuron
