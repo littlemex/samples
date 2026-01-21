@@ -1,0 +1,180 @@
+Description: EC2 FPGA instance (f2.6xlarge) with SSM parameter-based AMI resolution
+
+Parameters:
+  InstanceName:
+    Type: String
+    Description: FPGA EC2 instance name
+    Default: FPGADevelopment
+  InstanceVolumeSize:
+    Type: Number
+    Description: EC2 instance volume size in GB
+    Default: 500
+  InstanceType:
+    Description: EC2 instance type (f2 for FPGA hardware, c5 for simulation/build)
+    Type: String
+    Default: f2.6xlarge
+    AllowedValues:
+      - f2.2xlarge
+      - f2.4xlarge
+      - f2.6xlarge
+      - f2.12xlarge
+      - f2.24xlarge
+      - c5.2xlarge
+      - c5.9xlarge
+  FpgaAmiSsmParameter:
+    Type: String
+    Description: SSM parameter name containing FPGA Developer AMI ID
+    Default: /fpga/ami/latest
+  KeyPairName:
+    Type: String
+    Description: EC2 Key Pair name for SSH access (leave empty for SSM-only access)
+    Default: ""
+  AllowedSSHCidr:
+    Type: String
+    Description: CIDR block allowed to SSH (only used if KeyPairName is provided)
+    Default: 0.0.0.0/0
+
+Conditions:
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
+
+Resources:
+  FPGAInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub ec2.${AWS::URLSuffix}
+                - !Sub ssm.${AWS::URLSuffix}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: FPGADevelopmentPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - arn:aws:s3:::*-fpga-*
+                  - arn:aws:s3:::*-fpga-*/*
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeFpgaImages
+                  - ec2:DescribeFpgaImageAttribute
+                  - ec2:CreateFpgaImage
+                  - ec2:DeleteFpgaImage
+                  - ec2:ModifyFpgaImageAttribute
+                Resource: '*'
+
+  FPGAInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref FPGAInstanceRole
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for FPGA development instance
+      SecurityGroupIngress:
+        - !If
+          - HasKeyPair
+          - Description: Allow SSH from specified CIDR
+            IpProtocol: tcp
+            FromPort: 22
+            ToPort: 22
+            CidrIp: !Ref AllowedSSHCidr
+          - !Ref AWS::NoValue
+      SecurityGroupEgress:
+        - Description: Allow all outbound traffic
+          IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  FPGAInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      # SSM パラメータから AMI ID を動的に解決
+      ImageId: !Sub '{{resolve:ssm:${FpgaAmiSsmParameter}}}'
+      InstanceType: !Ref InstanceType
+      KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref AWS::NoValue]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref InstanceVolumeSize
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+            Iops: 3000
+            Throughput: 125
+      Monitoring: true
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      IamInstanceProfile: !Ref FPGAInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          # Set hostname
+          hostnamectl set-hostname ${InstanceName}
+
+          # Create working directory
+          mkdir -p /home/ubuntu/fpga-workspace
+          chown -R ubuntu:ubuntu /home/ubuntu/fpga-workspace
+
+          # Install additional tools
+          apt-get update
+          apt-get install -y \
+            git \
+            wget \
+            curl \
+            vim \
+            htop \
+            tree \
+            jq
+
+          # Setup AWS FPGA repository (if not already present)
+          if [ ! -d /home/ubuntu/aws-fpga ]; then
+            cd /home/ubuntu
+            git clone https://github.com/aws/aws-fpga.git
+            chown -R ubuntu:ubuntu aws-fpga
+          fi
+
+          # Signal completion
+          echo "FPGA instance setup completed at $(date)" > /tmp/userdata-complete.txt
+      Tags:
+        - Key: Name
+          Value: !Ref InstanceName
+        - Key: Purpose
+          Value: FPGA Development
+
+Outputs:
+  InstanceId:
+    Description: EC2 instance ID
+    Value: !Ref FPGAInstance
+  InstancePublicIp:
+    Description: EC2 instance public IP address
+    Value: !GetAtt FPGAInstance.PublicIp
+    Condition: HasKeyPair
+  InstancePublicDns:
+    Description: EC2 instance public DNS name
+    Value: !GetAtt FPGAInstance.PublicDnsName
+    Condition: HasKeyPair
+  SSMConnectCommand:
+    Description: Command to connect via SSM
+    Value: !Sub 'aws ssm start-session --target ${FPGAInstance} --region ${AWS::Region}'
+  FPGAWorkspaceDirectory:
+    Description: FPGA workspace directory
+    Value: /home/ubuntu/fpga-workspace
+  AmiIdUsed:
+    Description: AMI ID resolved from SSM parameter
+    Value: !Sub '{{resolve:ssm:${FpgaAmiSsmParameter}}}'

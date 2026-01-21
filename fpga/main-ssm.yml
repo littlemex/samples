@@ -1,0 +1,91 @@
+Description: AWS FPGA Development Environment with SSM-based AMI resolution. Version 1.0.0
+
+Parameters:
+  InstanceName:
+    Type: String
+    Description: FPGA EC2 instance name
+    Default: FPGADevelopment
+  InstanceVolumeSize:
+    Type: Number
+    Description: EC2 instance volume size in GB
+    Default: 500
+  InstanceType:
+    Description: EC2 instance type (f2 for FPGA hardware, c5 for simulation/build)
+    Type: String
+    Default: f2.6xlarge
+    AllowedValues:
+      - f2.2xlarge
+      - f2.4xlarge
+      - f2.6xlarge
+      - f2.12xlarge
+      - f2.24xlarge
+      - c5.2xlarge
+      - c5.9xlarge
+  FpgaAmiSsmParameter:
+    Type: String
+    Description: SSM parameter name containing FPGA Developer AMI ID
+    Default: /fpga/ami/latest
+  KeyPairName:
+    Type: String
+    Description: EC2 Key Pair name for SSH access (optional - leave empty for SSM-only)
+    Default: ""
+  AllowedSSHCidr:
+    Type: String
+    Description: CIDR block allowed to SSH (only if KeyPairName provided)
+    Default: 0.0.0.0/0
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Instance Configuration
+        Parameters:
+          - InstanceName
+          - InstanceVolumeSize
+          - InstanceType
+          - FpgaAmiSsmParameter
+      - Label:
+          default: Access Configuration
+        Parameters:
+          - KeyPairName
+          - AllowedSSHCidr
+    ParameterLabels:
+      InstanceName:
+        default: Instance name
+      InstanceVolumeSize:
+        default: Instance volume size (GB)
+      InstanceType:
+        default: Instance type
+      FpgaAmiSsmParameter:
+        default: SSM parameter name for FPGA AMI
+      KeyPairName:
+        default: SSH Key Pair name
+      AllowedSSHCidr:
+        default: Allowed SSH CIDR
+
+Resources:
+  EC2Stack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./ec2-ssm.yml
+      Parameters:
+        InstanceName: !Ref InstanceName
+        InstanceVolumeSize: !Ref InstanceVolumeSize
+        InstanceType: !Ref InstanceType
+        FpgaAmiSsmParameter: !Ref FpgaAmiSsmParameter
+        KeyPairName: !Ref KeyPairName
+        AllowedSSHCidr: !Ref AllowedSSHCidr
+
+Outputs:
+  InstanceId:
+    Description: FPGA EC2 instance ID
+    Value: !GetAtt EC2Stack.Outputs.InstanceId
+  SSMConnectCommand:
+    Description: Command to connect via AWS Systems Manager
+    Value: !GetAtt EC2Stack.Outputs.SSMConnectCommand
+  FPGAWorkspaceDirectory:
+    Description: FPGA workspace directory on the instance
+    Value: !GetAtt EC2Stack.Outputs.FPGAWorkspaceDirectory
+  AmiIdUsed:
+    Description: AMI ID resolved from SSM parameter
+    Value: !GetAtt EC2Stack.Outputs.AmiIdUsed
