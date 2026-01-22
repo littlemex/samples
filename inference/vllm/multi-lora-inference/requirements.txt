@@ -1,0 +1,24 @@
+# vLLM Multi-LoRA Inference Requirements
+
+# Core dependencies
+vllm>=0.4.1
+torch>=2.0.0
+transformers>=4.30.0
+huggingface-hub>=0.16.0
+
+# Optional dependencies for advanced features
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+
+# Utilities
+numpy>=1.24.0
+pandas>=2.0.0
+tqdm>=4.65.0
+requests>=2.31.0
+
+# Development and testing
+pytest>=7.4.0
+black>=23.7.0
+isort>=5.12.0

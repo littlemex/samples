@@ -1,0 +1,49 @@
+[
+  {
+    "prompt": "### Input:\nCreate a SQL query to find all users who registered in 2024\n\n### Response:\n",
+    "lora_adapter": "sql",
+    "temperature": 0.0,
+    "max_tokens": 256
+  },
+  {
+    "prompt": "### Input:\nCreate a SQL query to calculate the average order value by customer\n\n### Response:\n",
+    "lora_adapter": "sql",
+    "temperature": 0.0,
+    "max_tokens": 256
+  },
+  {
+    "prompt": "### Input:\nWrite a Python function to implement binary search\n\n### Response:\n",
+    "lora_adapter": "python",
+    "temperature": 0.0,
+    "max_tokens": 512
+  },
+  {
+    "prompt": "### Input:\nWrite a Python decorator that measures execution time\n\n### Response:\n",
+    "lora_adapter": "python",
+    "temperature": 0.0,
+    "max_tokens": 512
+  },
+  {
+    "prompt": "### Input:\nSolve the quadratic equation: x^2 - 5x + 6 = 0\n\n### Response:\n",
+    "lora_adapter": "math",
+    "temperature": 0.0,
+    "max_tokens": 256
+  },
+  {
+    "prompt": "What are the key principles of clean code?",
+    "temperature": 0.7,
+    "max_tokens": 512
+  },
+  {
+    "prompt": "### Input:\nCreate a SQL query to join customers and orders tables\n\n### Response:\n",
+    "lora_adapter": "sql",
+    "temperature": 0.0,
+    "max_tokens": 256
+  },
+  {
+    "prompt": "### Input:\nWrite a Python function to validate email addresses using regex\n\n### Response:\n",
+    "lora_adapter": "python",
+    "temperature": 0.0,
+    "max_tokens": 512
+  }
+]
