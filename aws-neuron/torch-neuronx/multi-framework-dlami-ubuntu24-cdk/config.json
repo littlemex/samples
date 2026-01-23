@@ -1,0 +1,13 @@
+{
+  "regions": {
+    "us-east-1": {
+      "amiSsmParameter": "/aws/service/neuron/dlami/multi-framework/ubuntu-24.04/latest/image_id"
+    },
+    "sa-east-1": {
+      "amiSsmParameter": "/aws/service/neuron/dlami/multi-framework/ubuntu-24.04/latest/image_id"
+    }
+  },
+  "defaultVolumeSize": 500,
+  "codeServerUser": "coder",
+  "homeFolder": "/work"
+}
