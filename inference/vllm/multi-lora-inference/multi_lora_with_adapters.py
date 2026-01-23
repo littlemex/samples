@@ -32,22 +32,23 @@ def main():
     )
 
     # LoRAアダプターの設定
+    # lora_pathにHuggingFaceリポジトリIDを指定すると自動ダウンロードされます
     print("\n[2/4] LoRAアダプターを設定中...")
     lora_adapters = {
         "function_call": LoRARequest(
             lora_name="function_call",
             lora_int_id=1,
-            lora_local_path="unclecode/tinyllama-function-call-lora-adapter-250424",
+            lora_path="unclecode/tinyllama-function-call-lora-adapter-250424",
         ),
         "text2sql": LoRARequest(
             lora_name="text2sql",
             lora_int_id=2,
-            lora_local_path="sid321axn/tiny-llama-text2sql",
+            lora_path="sid321axn/tiny-llama-text2sql",
         ),
         "gsm8k_math": LoRARequest(
             lora_name="gsm8k_math",
             lora_int_id=3,
-            lora_local_path="philimon/TinyLlama-gsm8k-lora",
+            lora_path="philimon/TinyLlama-gsm8k-lora",
         ),
     }
 

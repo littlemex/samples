@@ -91,10 +91,11 @@ llm = LLM(
 )
 
 # LoRAリクエストの作成
+# lora_pathにHuggingFaceリポジトリIDを指定すると自動ダウンロードされます
 lora_request = LoRARequest(
     lora_name="function_call",
     lora_int_id=1,
-    lora_local_path="unclecode/tinyllama-function-call-lora-adapter-250424",
+    lora_path="unclecode/tinyllama-function-call-lora-adapter-250424",
 )
 
 # 推論実行
@@ -109,10 +110,11 @@ outputs = llm.generate(
 
 ```python
 # 複数のLoRAアダプターを定義
+# 第1引数: lora_name, 第2引数: lora_int_id, 第3引数: lora_path
 adapters = {
-    "sql": LoRARequest("sql", 1, "sid321axn/tiny-llama-text2sql"),
-    "math": LoRARequest("math", 2, "philimon/TinyLlama-gsm8k-lora"),
-    "function": LoRARequest("function", 3, "unclecode/tinyllama-function-call-lora-adapter-250424"),
+    "sql": LoRARequest(lora_name="sql", lora_int_id=1, lora_path="sid321axn/tiny-llama-text2sql"),
+    "math": LoRARequest(lora_name="math", lora_int_id=2, lora_path="philimon/TinyLlama-gsm8k-lora"),
+    "function": LoRARequest(lora_name="function", lora_int_id=3, lora_path="unclecode/tinyllama-function-call-lora-adapter-250424"),
 }
 
 # タスクに応じて切り替え
