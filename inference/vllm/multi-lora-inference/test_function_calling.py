@@ -31,8 +31,8 @@ def load_function_calling_tests(json_path: Path) -> List[Dict]:
 
 def format_functions_for_system(functions: List[Dict]) -> str:
     """関数定義をシステムメッセージ用にフォーマット"""
-    functions_json = json.dumps(functions, indent=2)
-    return f"You are a helpful assistant with access to the following functions. Use them when appropriate:\n\n{functions_json}\n\nTo call a function, respond with:\n<functioncall>\n{{\"name\": \"function_name\", \"arguments\": '{{\"param\": \"value\"}}'}}\n<|endoftext|>"
+    functions_json = json.dumps(functions, ensure_ascii=False)
+    return f"You are a helpful assistant with access to the following functions. Use them if required -\n{functions_json}"
 
 
 def format_chat_prompt(user_message: str, system_message: str) -> str:
@@ -150,13 +150,13 @@ def main():
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=200,
+        default=300,
         help="最大生成トークン数",
     )
     parser.add_argument(
         "--temperature",
         type=float,
-        default=0.0,
+        default=0.1,
         help="サンプリング温度（0=決定的）",
     )
     parser.add_argument(
