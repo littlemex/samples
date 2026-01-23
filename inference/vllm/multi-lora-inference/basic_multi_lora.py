@@ -12,7 +12,7 @@ def main():
     # ベースモデルとLoRA設定でLLMを初期化
     print("Initializing vLLM with Multi-LoRA support...")
     llm = LLM(
-        model="meta-llama/Llama-2-7b-hf",
+        model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
         enable_lora=True,
         max_loras=2,
         max_lora_rank=8,
