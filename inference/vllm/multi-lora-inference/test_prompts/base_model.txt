@@ -1,0 +1,8 @@
+# ベースモデルテスト用プロンプト
+# 1行1プロンプト、#で始まる行はコメント
+
+What is the capital of France?
+Explain what machine learning is in simple terms.
+Write a simple Python hello world program.
+What is 2 + 2?
+Who wrote Romeo and Juliet?

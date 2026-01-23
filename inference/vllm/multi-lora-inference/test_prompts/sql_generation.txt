@@ -1,0 +1,8 @@
+# SQL生成テスト用プロンプト
+# Text2SQL LoRAアダプター用
+
+Create a SQL query to select all users from the users table.
+Write SQL to find all products with price greater than 100.
+Generate SQL to count the number of orders per customer.
+Create a SQL query to join customers and orders tables.
+Write SQL to find the top 5 most expensive products.
