@@ -1,0 +1,261 @@
+[
+  {
+    "user_query": "Get the current weather in Tokyo",
+    "functions": [
+      {
+        "name": "get_weather",
+        "description": "Get the current weather information for a specific location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The city name, e.g., Tokyo, New York"
+            },
+            "unit": {
+              "type": "string",
+              "enum": ["celsius", "fahrenheit"],
+              "description": "Temperature unit"
+            }
+          },
+          "required": ["location"]
+        }
+      }
+    ],
+    "expected_function": "get_weather",
+    "expected_args": {
+      "location": "Tokyo"
+    }
+  },
+  {
+    "user_query": "What is 25 multiplied by 4?",
+    "functions": [
+      {
+        "name": "calculate",
+        "description": "Perform mathematical calculations",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string",
+              "enum": ["add", "subtract", "multiply", "divide"],
+              "description": "Mathematical operation to perform"
+            },
+            "num1": {
+              "type": "number",
+              "description": "First number"
+            },
+            "num2": {
+              "type": "number",
+              "description": "Second number"
+            }
+          },
+          "required": ["operation", "num1", "num2"]
+        }
+      }
+    ],
+    "expected_function": "calculate",
+    "expected_args": {
+      "operation": "multiply",
+      "num1": 25,
+      "num2": 4
+    }
+  },
+  {
+    "user_query": "Calculate a 15% discount on a $120 item",
+    "functions": [
+      {
+        "name": "calculate_discount",
+        "description": "Calculate the discount amount and final price",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "original_price": {
+              "type": "number",
+              "description": "Original price of the item"
+            },
+            "discount_percentage": {
+              "type": "number",
+              "description": "Discount percentage (0-100)"
+            }
+          },
+          "required": ["original_price", "discount_percentage"]
+        }
+      }
+    ],
+    "expected_function": "calculate_discount",
+    "expected_args": {
+      "original_price": 120,
+      "discount_percentage": 15
+    }
+  },
+  {
+    "user_query": "Find all users who registered after January 1st, 2024",
+    "functions": [
+      {
+        "name": "query_database",
+        "description": "Query the database with specific filters",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "table": {
+              "type": "string",
+              "description": "Database table name"
+            },
+            "filters": {
+              "type": "object",
+              "description": "Filter conditions"
+            }
+          },
+          "required": ["table", "filters"]
+        }
+      }
+    ],
+    "expected_function": "query_database",
+    "expected_args": {
+      "table": "users",
+      "filters": {
+        "registration_date": {
+          "operator": "greater_than",
+          "value": "2024-01-01"
+        }
+      }
+    }
+  },
+  {
+    "user_query": "Book a flight from New York to London on March 15th",
+    "functions": [
+      {
+        "name": "book_flight",
+        "description": "Book a flight ticket",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "description": "Departure city"
+            },
+            "to": {
+              "type": "string",
+              "description": "Arrival city"
+            },
+            "date": {
+              "type": "string",
+              "description": "Flight date in YYYY-MM-DD format"
+            },
+            "class": {
+              "type": "string",
+              "enum": ["economy", "business", "first"],
+              "description": "Ticket class"
+            }
+          },
+          "required": ["from", "to", "date"]
+        }
+      }
+    ],
+    "expected_function": "book_flight",
+    "expected_args": {
+      "from": "New York",
+      "to": "London",
+      "date": "2024-03-15"
+    }
+  },
+  {
+    "user_query": "Send an email to john@example.com with subject 'Meeting Reminder' and message 'Don't forget our meeting tomorrow at 3 PM'",
+    "functions": [
+      {
+        "name": "send_email",
+        "description": "Send an email to a recipient",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "to": {
+              "type": "string",
+              "description": "Recipient email address"
+            },
+            "subject": {
+              "type": "string",
+              "description": "Email subject"
+            },
+            "message": {
+              "type": "string",
+              "description": "Email body"
+            }
+          },
+          "required": ["to", "subject", "message"]
+        }
+      }
+    ],
+    "expected_function": "send_email",
+    "expected_args": {
+      "to": "john@example.com",
+      "subject": "Meeting Reminder",
+      "message": "Don't forget our meeting tomorrow at 3 PM"
+    }
+  },
+  {
+    "user_query": "Create a reminder for 2 PM tomorrow to call the dentist",
+    "functions": [
+      {
+        "name": "create_reminder",
+        "description": "Create a reminder for a specific time",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "time": {
+              "type": "string",
+              "description": "Time in HH:MM format"
+            },
+            "date": {
+              "type": "string",
+              "description": "Date in YYYY-MM-DD format or relative like 'tomorrow'"
+            },
+            "message": {
+              "type": "string",
+              "description": "Reminder message"
+            }
+          },
+          "required": ["time", "message"]
+        }
+      }
+    ],
+    "expected_function": "create_reminder",
+    "expected_args": {
+      "time": "14:00",
+      "date": "tomorrow",
+      "message": "call the dentist"
+    }
+  },
+  {
+    "user_query": "Search for Python programming books published after 2020",
+    "functions": [
+      {
+        "name": "search_books",
+        "description": "Search for books with filters",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "keyword": {
+              "type": "string",
+              "description": "Search keyword"
+            },
+            "category": {
+              "type": "string",
+              "description": "Book category"
+            },
+            "year_after": {
+              "type": "integer",
+              "description": "Filter books published after this year"
+            }
+          },
+          "required": ["keyword"]
+        }
+      }
+    ],
+    "expected_function": "search_books",
+    "expected_args": {
+      "keyword": "Python programming",
+      "year_after": 2020
+    }
+  }
+]

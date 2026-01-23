@@ -1,0 +1,8 @@
+# Function Calling テスト用プロンプト
+# システムメッセージで関数定義を含める必要がある
+
+Get the current weather in Tokyo
+What is 25 multiplied by 4?
+Calculate a 15% discount on a $120 item
+Find all users who registered after January 1st, 2024
+Book a flight from New York to London on March 15th

@@ -58,7 +58,33 @@ python compare_lora_adapters.py \
     --output comparison_results.txt
 ```
 
-### 4. measure_memory_consumption.py（メモリ測定）
+### 4. test_function_calling.py（Function Calling評価）
+**Function Calling能力を定量的に評価**します。JSONで定義された関数とクエリを使用し、正しい関数呼び出しができるかテストします。
+
+```bash
+# Function LoRAでテスト
+python test_function_calling.py
+
+# ベースモデルと比較
+python test_function_calling.py --lora none
+
+# 結果を保存
+python test_function_calling.py --output function_test_results.txt
+```
+
+期待される出力形式：
+```
+<functioncall>
+{"name": "function_name", "arguments": '{"param": "value"}'}
+<|endoftext|>
+```
+
+評価内容：
+- 正しい関数が呼ばれたか
+- 引数が正しいか
+- 全体の精度（正解率）
+
+### 5. measure_memory_consumption.py（メモリ測定）
 **Multi-LoRA servingのメモリ削減効果を定量化**します。
 
 ```bash
@@ -74,7 +100,7 @@ python measure_memory_consumption.py --output memory_report.txt
 2. 個別LoRA × 3（それぞれ別のLLMインスタンス）
 3. Multi-LoRA（1つのLLMインスタンスに3つのLoRA同時ロード）
 
-### 5. batch_test_lora.py
+### 6. batch_test_lora.py
 txtファイルから複数のプロンプトを読み込んでバッチテストを実行します。
 
 ```bash
@@ -91,26 +117,13 @@ python batch_test_lora.py --prompt-file test_prompts/math_problems.txt --lora ma
 python batch_test_lora.py --prompt-file test_prompts/sql_generation.txt --lora text2sql --output results.txt
 ```
 
-### 6. advanced_multi_lora.py
-より高度な設定とエラーハンドリングを含む例です。
+**注**: Function CallingをテストするにはJSONフォーマットが必要なため、`test_function_calling.py`を使用してください。
 
-```bash
-python advanced_multi_lora.py
-```
+### その他のサンプル
 
-### 7. offline_batch_inference.py
-大量のリクエストをバッチ処理する例です。
-
-```bash
-python offline_batch_inference.py --input prompts.json --output results.json
-```
-
-### 8. online_serving.py
-オンラインサービング用のAPIサーバー例です。
-
-```bash
-python online_serving.py --port 8000
-```
+- `advanced_multi_lora.py` - より高度な設定とエラーハンドリング
+- `offline_batch_inference.py` - 大量リクエストのバッチ処理
+- `online_serving.py` - FastAPI APIサーバー
 
 ## 利用可能なLoRAアダプター
 
@@ -205,21 +218,60 @@ prompt = format_chat_prompt(
 
 ## テストプロンプトファイル
 
-`test_prompts/`ディレクトリに3つのサンプルファイルがあります：
+`test_prompts/`ディレクトリに以下のサンプルファイルがあります：
 
+### txtフォーマット（batch_test_lora.py用）
 - `base_model.txt` - 一般的な質問（ベースモデル用）
 - `sql_generation.txt` - SQLクエリ生成タスク
 - `math_problems.txt` - 数学問題
+- `function_calling.txt` - Function calling簡易テスト
+
+### JSONフォーマット（test_function_calling.py用）
+- `function_calling.json` - Function calling詳細テスト
+  - 関数定義（JSONスキーマ）
+  - ユーザークエリ
+  - 期待される関数名と引数
+  - 8つのテストケース（天気、計算、割引、DB検索など）
 
 カスタムプロンプトファイルの作成：
 
 ```bash
-# 1行1プロンプト、#で始まる行はコメント
+# txtファイル（1行1プロンプト、#で始まる行はコメント）
 cat > test_prompts/my_test.txt << 'EOF'
 # 私のテストプロンプト
 プロンプト1
 プロンプト2
 EOF
+```
+
+**Function Calling用のJSONファイル例**：
+
+```json
+[
+  {
+    "user_query": "Get the weather in Tokyo",
+    "functions": [
+      {
+        "name": "get_weather",
+        "description": "Get current weather",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "City name"
+            }
+          },
+          "required": ["location"]
+        }
+      }
+    ],
+    "expected_function": "get_weather",
+    "expected_args": {
+      "location": "Tokyo"
+    }
+  }
+]
 ```
 
 ## 設定パラメータの説明
