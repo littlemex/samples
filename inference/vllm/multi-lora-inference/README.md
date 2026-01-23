@@ -34,7 +34,47 @@ python basic_multi_lora.py
 python multi_lora_with_adapters.py
 ```
 
-### 3. batch_test_lora.py
+### 3. compare_lora_adapters.py（Multi-LoRA比較）
+**同じプロンプトを複数のLoRAアダプターで実行し、結果を比較**します。Multi-LoRA servingの真価を検証できます。
+
+```bash
+# SQLプロンプトを全てのLoRAで比較
+python compare_lora_adapters.py --prompt-file test_prompts/sql_generation.txt
+
+# 数学プロンプトを全てのLoRAで比較（Math LoRAが一番良い結果を出すか？）
+python compare_lora_adapters.py --prompt-file test_prompts/math_problems.txt
+
+# 特定のLoRAだけを比較
+python compare_lora_adapters.py \
+    --prompt-file test_prompts/sql_generation.txt \
+    --loras base text2sql math
+
+# 単一プロンプトで比較
+python compare_lora_adapters.py --prompt "What is 2+2?" --loras base text2sql math
+
+# 結果を保存
+python compare_lora_adapters.py \
+    --prompt-file test_prompts/sql_generation.txt \
+    --output comparison_results.txt
+```
+
+### 4. measure_memory_consumption.py（メモリ測定）
+**Multi-LoRA servingのメモリ削減効果を定量化**します。
+
+```bash
+# メモリ消費量を測定
+python measure_memory_consumption.py
+
+# 結果をファイルに保存
+python measure_memory_consumption.py --output memory_report.txt
+```
+
+測定内容：
+1. ベースモデルのみ
+2. 個別LoRA × 3（それぞれ別のLLMインスタンス）
+3. Multi-LoRA（1つのLLMインスタンスに3つのLoRA同時ロード）
+
+### 5. batch_test_lora.py
 txtファイルから複数のプロンプトを読み込んでバッチテストを実行します。
 
 ```bash
@@ -51,21 +91,21 @@ python batch_test_lora.py --prompt-file test_prompts/math_problems.txt --lora ma
 python batch_test_lora.py --prompt-file test_prompts/sql_generation.txt --lora text2sql --output results.txt
 ```
 
-### 4. advanced_multi_lora.py
+### 6. advanced_multi_lora.py
 より高度な設定とエラーハンドリングを含む例です。
 
 ```bash
 python advanced_multi_lora.py
 ```
 
-### 5. offline_batch_inference.py
+### 7. offline_batch_inference.py
 大量のリクエストをバッチ処理する例です。
 
 ```bash
 python offline_batch_inference.py --input prompts.json --output results.json
 ```
 
-### 6. online_serving.py
+### 8. online_serving.py
 オンラインサービング用のAPIサーバー例です。
 
 ```bash
