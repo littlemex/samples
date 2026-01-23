@@ -100,7 +100,27 @@ python measure_memory_consumption.py --output memory_report.txt
 2. 個別LoRA × 3（それぞれ別のLLMインスタンス）
 3. Multi-LoRA（1つのLLMインスタンスに3つのLoRA同時ロード）
 
-### 6. batch_test_lora.py
+### 6. measure_lora_memory.py（LoRAメモリ詳細測定）
+**LoRAアダプターのディスクサイズとランタイムメモリ使用量を詳細測定**します。CPU RAM容量の制約を確認できます。
+
+```bash
+# デフォルト設定で測定
+python measure_lora_memory.py
+
+# max_cpu_lorasを指定して測定
+python measure_lora_memory.py --max-cpu-loras 10
+
+# 結果をファイルに保存
+python measure_lora_memory.py --output lora_memory_report.txt
+```
+
+測定内容：
+1. 各LoRAアダプターのディスクサイズ
+2. LoRAロード時のCPU RAM使用量
+3. プロセスメモリの増加量
+4. max_cpu_lorasパラメータの推奨値の計算
+
+### 7. batch_test_lora.py
 txtファイルから複数のプロンプトを読み込んでバッチテストを実行します。
 
 ```bash
