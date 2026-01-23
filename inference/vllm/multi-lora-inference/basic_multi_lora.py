@@ -27,31 +27,16 @@ def main():
         max_tokens=256,
     )
 
-    # プロンプトとLoRAリクエストの準備
+    # プロンプトの準備（まずはベースモデルのみでテスト）
     prompts = [
-        # SQL特化LoRAを使用
-        (
-            "### Input:\nCreate a SQL query to find all users who signed up in the last 30 days\n\n### Response:\n",
-            sampling_params,
-            LoRARequest("sql_adapter", 1, "./lora_adapters/sql-lora"),
-        ),
-        # Python特化LoRAを使用
-        (
-            "### Input:\nWrite a Python function to calculate fibonacci numbers\n\n### Response:\n",
-            sampling_params,
-            LoRARequest("python_adapter", 2, "./lora_adapters/python-lora"),
-        ),
-        # ベースモデルのみを使用（LoRAなし）
-        (
-            "What is the capital of France?",
-            sampling_params,
-            None,
-        ),
+        "Create a SQL query to find all users who signed up in the last 30 days",
+        "Write a Python function to calculate fibonacci numbers",
+        "What is the capital of France?",
     ]
 
     # 推論実行
     print("\nGenerating responses...")
-    outputs = llm.generate(prompts)
+    outputs = llm.generate(prompts, sampling_params)
 
     # 結果の表示
     print("\n" + "=" * 80)
