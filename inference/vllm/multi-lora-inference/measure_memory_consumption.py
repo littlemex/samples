@@ -17,6 +17,7 @@ Multi-LoRA servingのメモリ削減効果を測定するスクリプト
 
 import argparse
 import gc
+import subprocess
 import time
 from pathlib import Path
 from typing import Dict, List
@@ -46,17 +47,34 @@ LORA_ADAPTERS = [
 
 
 def get_gpu_memory_mb() -> float:
-    """現在のGPUメモリ使用量をMB単位で取得"""
-    if torch.cuda.is_available():
-        return torch.cuda.memory_allocated() / 1024 / 1024
-    return 0.0
+    """nvidia-smiを使って現在のGPUメモリ使用量をMB単位で取得"""
+    try:
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=memory.used', '--format=csv,noheader,nounits'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        # 最初のGPUのメモリ使用量を取得（MB）
+        memory_mb = float(result.stdout.strip().split('\n')[0])
+        return memory_mb
+    except Exception:
+        return 0.0
 
 
 def get_gpu_memory_reserved_mb() -> float:
-    """GPUに予約されたメモリをMB単位で取得"""
-    if torch.cuda.is_available():
-        return torch.cuda.memory_reserved() / 1024 / 1024
-    return 0.0
+    """nvidia-smiを使ってGPUの総メモリをMB単位で取得"""
+    try:
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=memory.total', '--format=csv,noheader,nounits'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        memory_mb = float(result.stdout.strip().split('\n')[0])
+        return memory_mb
+    except Exception:
+        return 0.0
 
 
 def clear_memory():
@@ -65,7 +83,8 @@ def clear_memory():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
-    time.sleep(2)
+    # プロセスが完全に終了してメモリが解放されるまで待機
+    time.sleep(5)
 
 
 def measure_base_model(model_name: str) -> Dict:
