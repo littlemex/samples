@@ -22,6 +22,7 @@ Options:
     --start-from TASK_ID            指定したタスクIDから再開
     --clean-state                   状態ファイルをクリーンして最初から実行
     --dry-run                       実際には実行せず、タスクを表示のみ
+    --reboot                        セットアップ完了後にインスタンスをリブート
     -h, --help                      このヘルプを表示
 
 例:
@@ -39,6 +40,9 @@ Options:
 
     # ドライラン（実行内容の確認）
     $0 -i i-1234567890abcdef0 --dry-run
+
+    # セットアップ後にリブート
+    $0 -i i-1234567890abcdef0 --reboot
 EOF
 }
 
@@ -54,6 +58,7 @@ NGINX_PORT="80"
 START_FROM=""
 CLEAN_STATE=false
 DRY_RUN=false
+REBOOT=false
 
 # パラメータ解析
 while [[ $# -gt 0 ]]; do
@@ -100,6 +105,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --dry-run)
             DRY_RUN=true
+            shift
+            ;;
+        --reboot)
+            REBOOT=true
             shift
             ;;
         -h|--help)
@@ -228,6 +237,28 @@ if [[ $? -eq 0 ]]; then
     echo "  aws ssm start-session --target $INSTANCE_ID --region $REGION"
     echo ""
     echo "========================================="
+
+    # リブート処理
+    if [[ "$REBOOT" == true ]]; then
+        echo ""
+        echo "🔄 インスタンスをリブートしています..."
+        echo ""
+        aws ec2 reboot-instances \
+            --instance-ids "$INSTANCE_ID" \
+            --region "$REGION"
+
+        if [[ $? -eq 0 ]]; then
+            echo "✅ リブート開始しました"
+            echo ""
+            echo "⏳ インスタンスの状態確認:"
+            echo "  aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --region $REGION"
+            echo ""
+            echo "⚠️  注意: リブート後、Code Serverが再起動するまで数分かかる場合があります"
+        else
+            echo "❌ リブートの開始に失敗しました"
+            exit 1
+        fi
+    fi
 else
     echo ""
     echo "❌ セットアップが失敗しました"
