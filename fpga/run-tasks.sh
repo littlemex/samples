@@ -366,11 +366,14 @@ for idx, task in enumerate(task_definition['tasks'], 1):
             log_info(f"[{idx}/{total_tasks}] スキップ: {task_id} - {task_name}")
             continue
 
-    # 既に成功しているタスクはスキップ
-    if task_id in state['tasks'] and state['tasks'][task_id].get('status') == 'success':
+    # 既に成功しているタスクはスキップ（検証タスクは除く）
+    is_verification_task = 'verify' in task_id.lower() or 'validation' in task_id.lower()
+    if task_id in state['tasks'] and state['tasks'][task_id].get('status') == 'success' and not is_verification_task:
         log_success(f"[{idx}/{total_tasks}] 完了済み: {task_id} - {task_name}")
         completed_tasks += 1
         continue
+    elif is_verification_task and task_id in state['tasks'] and state['tasks'][task_id].get('status') == 'success':
+        log_info(f"[{idx}/{total_tasks}] 検証タスクを再実行: {task_id} - {task_name}")
 
     print("")
     print(f"{CYAN}{'='*80}{NC}")
@@ -398,7 +401,11 @@ for idx, task in enumerate(task_definition['tasks'], 1):
         completed_tasks += 1
         if not dry_run and result.get('output'):
             print(f"\n{GREEN}出力:{NC}")
-            print(result['output'][:500])  # 最初の500文字のみ表示
+            # 検証タスクは全出力を表示、その他は500文字まで
+            if is_verification_task:
+                print(result['output'])
+            else:
+                print(result['output'][:500])  # 最初の500文字のみ表示
     else:
         failed_tasks += 1
         state['tasks'][task_id]['error'] = result.get('error', '')
