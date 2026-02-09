@@ -44,7 +44,7 @@ fi
 
 # 4. Configure git ownership
 echo '[4/9] Configuring git ownership...'
-git config --global --add safe.directory /home/ubuntu/aws-fpga
+sudo -u ubuntu HOME=/home/ubuntu git config --global --add safe.directory /home/ubuntu/aws-fpga
 echo 'Git ownership configured'
 
 # 5. Setup HDK environment
