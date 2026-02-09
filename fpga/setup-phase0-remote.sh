@@ -10,13 +10,13 @@ echo ""
 if [ ! -d /home/ubuntu/aws-fpga ]; then
   echo '[1/9] Cloning aws-fpga repository...'
   cd /home/ubuntu
-  sudo -u ubuntu git clone https://github.com/aws/aws-fpga.git
+  sudo -u ubuntu HOME=/home/ubuntu git clone https://github.com/aws/aws-fpga.git
   cd aws-fpga
-  sudo -u ubuntu git checkout master
+  sudo -u ubuntu HOME=/home/ubuntu git checkout master
 else
   echo '[1/9] Updating aws-fpga repository...'
   cd /home/ubuntu/aws-fpga
-  sudo -u ubuntu git pull
+  sudo -u ubuntu HOME=/home/ubuntu git pull
 fi
 
 # 2. Configure Vivado path (F2 AMI uses /opt/Xilinx instead of /tools)
