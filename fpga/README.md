@@ -127,6 +127,35 @@ export INSTANCE_ID=$(aws cloudformation describe-stacks \
 7. **07-check-vivado**: Vivado の確認
 8. **08-create-workspace**: Phase 0 ワークスペースの作成
 9. **09-complete**: セットアップ完了
+10. **10-run-cl-sde-simulation**: cl_sde シミュレーション実行（約 3 分）
+11. **11-verify-simulation**: シミュレーション結果検証・アーカイブ（常に実行）
+
+**注**: タスク 11（検証タスク）は完了済みでも毎回実行され、結果が表示されます。
+
+### 実行結果例
+
+```
+[11/11] Verifying simulation results...
+✅ Verification PASSED
+
+=== Final Results ===
+*** TEST PASSED ***
+[    7540ns] : Detected   0 errors
+
+Simulation time:
+[    7540ns] : Detected   0 errors
+
+Resource usage:
+INFO: xsimkernel Simulation Memory Usage: 337280 KB (Peak: 379276 KB), Simulation CPU Usage: 4820 ms
+
+Archiving results...
+Results archived: /home/ubuntu/fpga-phase0/results/simulations/cl_sde_test_simple_c2h_20260209_161831.log
+
+=== Phase 0 Complete ===
+Setup: ✅
+Simulation: ✅
+Verification: ✅
+```
 
 ### 参考資料
 
