@@ -1,0 +1,173 @@
+{
+  "name": "Phase 0: AWS FPGA Simulation Setup",
+  "description": "C5 インスタンス上で aws-fpga 環境をセットアップし、Vivado シミュレーション環境を構築",
+  "variables": {
+    "USER": "ubuntu",
+    "HOME_DIR": "/home/ubuntu",
+    "VIVADO_VERSION": "2025.2",
+    "VIVADO_PATH": "/opt/Xilinx/2025.2/Vivado"
+  },
+  "tasks": [
+    {
+      "id": "01-clone-aws-fpga",
+      "name": "aws-fpga リポジトリのクローン",
+      "description": "GitHub から aws-fpga リポジトリをクローンまたは更新",
+      "commands": [
+        "set -e",
+        "echo '=== Phase 0: AWS FPGA Simulation Setup ==='",
+        "echo \"Started at: $(date)\"",
+        "echo ''",
+        "if [ ! -d {{HOME_DIR}}/aws-fpga ]; then",
+        "  echo '[1/9] Cloning aws-fpga repository...'",
+        "  cd {{HOME_DIR}}",
+        "  sudo -u {{USER}} HOME={{HOME_DIR}} git clone https://github.com/aws/aws-fpga.git",
+        "  cd aws-fpga",
+        "  sudo -u {{USER}} HOME={{HOME_DIR}} git checkout master",
+        "  echo 'aws-fpga cloned successfully'",
+        "else",
+        "  echo '[1/9] Updating aws-fpga repository...'",
+        "  cd {{HOME_DIR}}/aws-fpga",
+        "  sudo -u {{USER}} HOME={{HOME_DIR}} git pull",
+        "  echo 'aws-fpga updated'",
+        "fi"
+      ]
+    },
+    {
+      "id": "02-configure-vivado",
+      "name": "Vivado パスの設定",
+      "description": "Vivado 2025.2 のパスを設定し、PATH 環境変数に追加",
+      "commands": [
+        "set -e",
+        "echo '[2/9] Configuring Vivado path...'",
+        "if [ -d {{VIVADO_PATH}}/bin ]; then",
+        "  export XILINX_VIVADO={{VIVADO_PATH}}",
+        "  export PATH={{VIVADO_PATH}}/bin:$PATH",
+        "  echo \"Vivado found at {{VIVADO_PATH}}\"",
+        "  echo \"XILINX_VIVADO=$XILINX_VIVADO\" >> /tmp/vivado-env.txt",
+        "  echo \"PATH=$PATH\" >> /tmp/vivado-env.txt",
+        "elif [ -d /tools/Xilinx/Vivado ]; then",
+        "  export XILINX_VIVADO=/tools/Xilinx/Vivado",
+        "  export PATH=/tools/Xilinx/Vivado/bin:$PATH",
+        "  echo 'Vivado found at /tools/Xilinx/Vivado'",
+        "  echo \"XILINX_VIVADO=$XILINX_VIVADO\" >> /tmp/vivado-env.txt",
+        "  echo \"PATH=$PATH\" >> /tmp/vivado-env.txt",
+        "else",
+        "  echo 'Vivado not found in standard locations'",
+        "  exit 1",
+        "fi"
+      ]
+    },
+    {
+      "id": "03-patch-vivado-version",
+      "name": "Vivado バージョンの互換性設定",
+      "description": "supported_vivado_versions.txt に Vivado 2025.2 を追加",
+      "commands": [
+        "set -e",
+        "echo '[3/9] Checking Vivado version compatibility...'",
+        "cd {{HOME_DIR}}/aws-fpga",
+        "if ! grep -q 'v{{VIVADO_VERSION}}' supported_vivado_versions.txt 2>/dev/null; then",
+        "  echo 'vivado v{{VIVADO_VERSION}} (64-bit)' >> supported_vivado_versions.txt",
+        "  echo 'Added Vivado {{VIVADO_VERSION}} to supported versions'",
+        "else",
+        "  echo 'Vivado {{VIVADO_VERSION}} already in supported versions'",
+        "fi"
+      ]
+    },
+    {
+      "id": "04-configure-git",
+      "name": "Git の所有権設定",
+      "description": "aws-fpga ディレクトリを safe.directory に追加",
+      "commands": [
+        "set -e",
+        "echo '[4/9] Configuring git ownership...'",
+        "sudo -u {{USER}} HOME={{HOME_DIR}} git config --global --add safe.directory {{HOME_DIR}}/aws-fpga",
+        "echo 'Git ownership configured'"
+      ]
+    },
+    {
+      "id": "05-setup-hdk",
+      "name": "HDK 環境のセットアップ",
+      "description": "hdk_setup.sh を実行して HDK 環境変数を設定",
+      "commands": [
+        "set -e",
+        "echo '[5/9] Setting up HDK environment...'",
+        "cd {{HOME_DIR}}/aws-fpga",
+        "source /tmp/vivado-env.txt",
+        "sudo -u {{USER}} bash -c \"export XILINX_VIVADO=$XILINX_VIVADO && export PATH=$PATH && source hdk_setup.sh && env | grep -E '(HDK|VIVADO)' > {{HOME_DIR}}/.fpga_env\"",
+        "echo 'HDK environment configured'",
+        "cat {{HOME_DIR}}/.fpga_env"
+      ]
+    },
+    {
+      "id": "06-add-to-bashrc",
+      "name": ".bashrc への追加",
+      "description": "hdk_setup.sh を .bashrc に追加して永続化",
+      "commands": [
+        "set -e",
+        "echo '[6/9] Adding to .bashrc...'",
+        "if ! grep -q 'hdk_setup.sh' {{HOME_DIR}}/.bashrc; then",
+        "  cat >> {{HOME_DIR}}/.bashrc << 'BASHRC_EOF'",
+        "",
+        "# AWS FPGA HDK Environment",
+        "if [ -f ~/aws-fpga/hdk_setup.sh ]; then",
+        "  export XILINX_VIVADO={{VIVADO_PATH}}",
+        "  export PATH={{VIVADO_PATH}}/bin:$PATH",
+        "  source ~/aws-fpga/hdk_setup.sh",
+        "fi",
+        "BASHRC_EOF",
+        "  echo '.bashrc updated'",
+        "else",
+        "  echo '.bashrc already contains hdk_setup.sh'",
+        "fi"
+      ]
+    },
+    {
+      "id": "07-check-vivado",
+      "name": "Vivado の確認",
+      "description": "Vivado のバージョンを確認",
+      "commands": [
+        "set -e",
+        "echo '[7/9] Checking Vivado...'",
+        "source /tmp/vivado-env.txt",
+        "if command -v vivado &> /dev/null; then",
+        "  vivado -version 2>&1 | head -1",
+        "else",
+        "  echo 'Vivado not found (expected for Ubuntu base AMI)'",
+        "fi"
+      ]
+    },
+    {
+      "id": "08-create-workspace",
+      "name": "Phase 0 ワークスペースの作成",
+      "description": "実験用ディレクトリ構造を作成",
+      "commands": [
+        "set -e",
+        "echo '[8/9] Creating Phase 0 workspace...'",
+        "sudo -u {{USER}} mkdir -p {{HOME_DIR}}/fpga-phase0/{experiments,results/{benchmarks,waveforms},artifacts}",
+        "echo 'Phase 0 workspace created: {{HOME_DIR}}/fpga-phase0'",
+        "ls -la {{HOME_DIR}}/fpga-phase0/"
+      ]
+    },
+    {
+      "id": "09-complete",
+      "name": "セットアップ完了",
+      "description": "完了フラグを作成し、環境を確認",
+      "commands": [
+        "set -e",
+        "echo '[9/9] Setup complete!'",
+        "echo 'Phase 0 setup completed' > /tmp/phase0-setup-complete.txt",
+        "echo \"Completed at: $(date)\" >> /tmp/phase0-setup-complete.txt",
+        "echo ''",
+        "echo '=== Setup Summary ==='",
+        "echo 'aws-fpga location: {{HOME_DIR}}/aws-fpga'",
+        "if [ -f {{HOME_DIR}}/.fpga_env ]; then",
+        "  echo 'HDK environment variables:'",
+        "  cat {{HOME_DIR}}/.fpga_env | head -5",
+        "fi",
+        "echo 'Phase 0 workspace: {{HOME_DIR}}/fpga-phase0'",
+        "echo ''",
+        "echo '=== Phase 0 Setup Complete ==='"
+      ]
+    }
+  ]
+}
