@@ -20,6 +20,7 @@ Parameters:
       - f2.12xlarge
       - f2.24xlarge
       - c5.2xlarge
+      - c5.4xlarge
       - c5.9xlarge
   FpgaAmiId:
     Type: String
