@@ -1,0 +1,33 @@
+# モデルファイル
+models/
+*.pt
+*.safetensors
+*.bin
+
+# コンパイル済みモデル
+*-compiled-tp*/
+
+# 音声ファイル
+test_audio/*.wav
+test_audio/*.mp3
+test_audio/*.flac
+test_audio/*.m4a
+test_audio/*.ogg
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
