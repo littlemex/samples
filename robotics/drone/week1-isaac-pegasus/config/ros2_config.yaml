@@ -1,0 +1,170 @@
+# Week 1: ROS2 Configuration
+# Isaac Sim 4.5.0 + Pegasus Simulator用のROS2設定
+
+# ROS2環境設定
+ros2:
+  distro: humble
+  domain_id: 0
+  middleware: rmw_fastrtps_cpp
+  
+  # FastRTPS設定
+  fastrtps:
+    max_message_size: 10485760  # 10MB
+    history_depth: 10
+    reliability: reliable
+    durability: volatile
+
+# トピック設定
+topics:
+  # カメラ
+  camera:
+    rgb:
+      topic: /iris/camera/rgb
+      type: sensor_msgs/Image
+      qos:
+        reliability: best_effort
+        history: keep_last
+        depth: 10
+    
+    depth:
+      topic: /iris/camera/depth
+      type: sensor_msgs/Image
+      qos:
+        reliability: best_effort
+        history: keep_last
+        depth: 10
+  
+  # IMU
+  imu:
+    topic: /iris/imu
+    type: sensor_msgs/Imu
+    qos:
+      reliability: reliable
+      history: keep_last
+      depth: 100
+  
+  # オドメトリ
+  odometry:
+    topic: /iris/odom
+    type: nav_msgs/Odometry
+    qos:
+      reliability: reliable
+      history: keep_last
+      depth: 50
+  
+  # GPS
+  gps:
+    topic: /iris/gps
+    type: sensor_msgs/NavSatFix
+    qos:
+      reliability: best_effort
+      history: keep_last
+      depth: 10
+  
+  # TF (Transform)
+  tf:
+    topic: /tf
+    type: tf2_msgs/TFMessage
+    qos:
+      reliability: reliable
+      history: keep_last
+      depth: 100
+  
+  # 制御コマンド
+  cmd_vel:
+    topic: /iris/cmd_vel
+    type: geometry_msgs/Twist
+    qos:
+      reliability: reliable
+      history: keep_last
+      depth: 10
+
+# ノード設定
+nodes:
+  data_collector:
+    name: data_collector
+    namespace: /
+    parameters:
+      save_interval: 10  # 10フレームに1回保存
+      image_format: jpg
+      log_format: jsonl
+  
+  waypoint_controller:
+    name: waypoint_controller
+    namespace: /
+    parameters:
+      control_frequency: 60.0  # Hz
+      position_tolerance: 0.5  # meters
+      max_velocity: 2.0  # m/s
+
+# ロギング設定
+logging:
+  level: INFO
+  console_output: true
+  file_output: true
+  log_directory: /workspace/week1-isaac-pegasus/data/logs
+  
+  # ログファイル設定
+  files:
+    ros2: ros2.log
+    isaac_sim: isaac_sim.log
+    data_collection: data_collection.log
+
+# データ収集設定
+data_collection:
+  enabled: true
+  output_dir: /workspace/week1-isaac-pegasus/data
+  
+  # 画像保存設定
+  images:
+    save_rgb: true
+    save_depth: true
+    compression_quality: 90
+    resize: false
+    target_size: [640, 480]
+  
+  # センサーデータ保存
+  sensors:
+    save_imu: true
+    save_gps: true
+    save_odom: true
+    save_tf: true
+  
+  # 保存頻度
+  rates:
+    images: 6.0  # Hz (6fps)
+    sensors: 60.0  # Hz
+
+# パフォーマンス設定
+performance:
+  use_sim_time: true
+  real_time_factor: 1.0
+  thread_priority: normal
+  
+  # リソース制限
+  limits:
+    max_memory_mb: 8192
+    max_cpu_percent: 80
+
+# デバッグ設定
+debug:
+  enabled: false
+  verbose: false
+  visualize_topics: false
+  publish_diagnostics: true
+  diagnostics_rate: 1.0  # Hz
+
+# Week 2への準備
+cosmos_preparation:
+  # Week 2で使用するデータフォーマット
+  video_export:
+    enabled: true
+    format: mp4
+    fps: 30
+    resolution: [1280, 720]
+  
+  # メタデータ
+  metadata:
+    project: week1-isaac-pegasus
+    description: "Iris drone waypoint flight simulation"
+    tags: [simulation, isaac-sim, pegasus, ros2]
