@@ -311,3 +311,60 @@ class NeuronGPTInstance(BaseModelInstance):
             output_index += 1
 
         return self.module, aliases
+
+
+if __name__ == "__main__":
+    import torch
+    from types import SimpleNamespace
+
+    # Small config for CPU smoke test (30 layers / 1024 dim would be slow on CPU)
+    ns = SimpleNamespace(
+        gpt_layers=2,
+        gpt_n_model_channels=64,
+        gpt_n_heads=4,
+        max_seq_len=16,
+        neuron_config=SimpleNamespace(
+            batch_size=1,
+            torch_dtype=torch.float32,
+            tp_degree=1,
+        ),
+    )
+    BATCH = ns.neuron_config.batch_size
+    SEQ = ns.max_seq_len
+    N = ns.gpt_n_model_channels
+
+    print("[TEST] NeuronGPTTransformer - Prefill mode (seq_len > 1)")
+    model = NeuronGPTTransformer(
+        n_layer=ns.gpt_layers,
+        n_state=ns.gpt_n_model_channels,
+        n_head=ns.gpt_n_heads,
+        batch_size=BATCH,
+        seq_len=SEQ,
+        dtype=ns.neuron_config.torch_dtype,
+    )
+    hidden = torch.randn(BATCH, SEQ, N)
+    last_pos = torch.tensor([SEQ - 1]).expand(BATCH)
+    mask = torch.ones(BATCH, SEQ, dtype=torch.int32)
+    outputs = model(hidden, last_pos, mask)
+    # outputs = (hidden_states, cache_k_0, ..., cache_k_N-1, cache_v_0, ..., cache_v_N-1)
+    print(f"  hidden_states shape : {outputs[0].shape}")  # [1, 16, 64]
+    print(f"  total outputs       : {len(outputs)} (1 + 2 * n_layer = {1 + 2 * ns.gpt_layers})")
+    print(f"  cache_k[0] shape    : {outputs[1].shape}")  # [1, n_heads, 16, head_dim]
+
+    print("[TEST] NeuronGPTTransformer - Decode mode (seq_len == 1)")
+    hidden_dec = torch.randn(BATCH, 1, N)
+    last_pos_dec = torch.tensor([5]).expand(BATCH)
+    mask_dec = torch.ones(BATCH, SEQ, dtype=torch.int32)
+    outputs_dec = model(hidden_dec, last_pos_dec, mask_dec)
+    print(f"  hidden_states shape : {outputs_dec[0].shape}")  # [1, 1, 64]
+    print(f"  cache_k[0] shape    : {outputs_dec[1].shape}")  # same as prefill (full cache)
+
+    print("[TEST] NeuronGPTInstance.get() - aliases for KV-Cache write-back")
+    instance = NeuronGPTInstance(ns)
+    instance.load_module()
+    module, aliases = instance.get()
+    print(f"  num aliases: {len(aliases)} (expected {2 * ns.gpt_layers} = 2 x n_layer)")
+    for param, idx in aliases.items():
+        print(f"    output_index={idx}  param.shape={param.shape}")
+
+    print("[OK] modeling_gpt.py smoke test passed")

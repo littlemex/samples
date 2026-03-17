@@ -1,0 +1,8 @@
+[project]
+name = "xttsv2-nxd-inference"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["torch", "transformers"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

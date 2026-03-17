@@ -101,3 +101,36 @@ class ModelWrapperGPTDecode(ModelWrapper):
     def forward(self, *args, **kwargs):
         """Forward pass through the model"""
         return self.model(*args, **kwargs)
+
+
+if __name__ == "__main__":
+    import torch
+    from types import SimpleNamespace
+
+    ns = SimpleNamespace(
+        gpt_layers=2,
+        gpt_n_model_channels=64,
+        gpt_n_heads=4,
+        max_seq_len=16,
+        neuron_config=SimpleNamespace(
+            batch_size=1,
+            torch_dtype=torch.float32,
+            tp_degree=1,
+        ),
+    )
+
+    print("[TEST] ModelWrapperGPTPrefill.input_generator()")
+    prefill = ModelWrapperGPTPrefill(ns, NeuronGPTInstance)
+    [(hidden, last_pos, mask)] = prefill.input_generator()
+    print(f"  hidden_states : {hidden.shape}")   # [1, 16, 64]
+    print(f"  last_pos      : {last_pos}")        # tensor([15])
+    print(f"  mask          : {mask.shape}")      # [1, 16]
+
+    print("[TEST] ModelWrapperGPTDecode.input_generator()")
+    decode = ModelWrapperGPTDecode(ns, NeuronGPTInstance)
+    [(hidden, last_pos, mask)] = decode.input_generator()
+    print(f"  hidden_states : {hidden.shape}")   # [1, 1, 64]  (single token)
+    print(f"  last_pos      : {last_pos}")        # tensor([100])
+    print(f"  mask          : {mask.shape}")      # [1, 16]  (full cache mask)
+
+    print("[OK] model_wrapper_gpt.py smoke test passed")

@@ -267,3 +267,42 @@ class NeuronApplicationXTTSv2GPT:
 
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
+
+
+if __name__ == "__main__":
+    import torch
+    from types import SimpleNamespace
+
+    ns = SimpleNamespace(
+        gpt_layers=2,
+        gpt_n_model_channels=64,
+        gpt_n_heads=4,
+        max_seq_len=16,
+        neuron_config=SimpleNamespace(
+            batch_size=1,
+            torch_dtype=torch.float32,
+            tp_degree=1,
+        ),
+        xttsv2_checkpoint_path="",
+    )
+
+    print("[TEST] NeuronApplicationXTTSv2GPT structure")
+    app = NeuronApplicationXTTSv2GPT("/tmp/test_model", ns)
+    print(f"  prefill_app : {type(app.prefill_app).__name__}")
+    print(f"  decode_app  : {type(app.decode_app).__name__}")
+    pw = app.prefill_app.models[0]
+    dw = app.decode_app.models[0]
+    print(f"  prefill ModelWrapper tag : {pw.tag}")
+    print(f"  decode  ModelWrapper tag : {dw.tag}")
+
+    print("[TEST] NeuronApplicationXTTSv2GPT.compile() / load() (stubs)")
+    app.compile()
+    app.load()
+
+    print("[TEST] NeuronApplicationXTTSv2GPT._make_zero_state_dict()")
+    sd = _make_zero_state_dict(ns)
+    print(f"  state_dict keys: {len(sd)}")
+    first_key = next(iter(sd))
+    print(f"  first key: {first_key}  shape: {sd[first_key].shape}")
+
+    print("[OK] application_gpt.py smoke test passed")
