@@ -222,7 +222,7 @@ class NeuronGPTTransformer(nn.Module):
         n_head: Number of attention heads (16)
         batch_size: Batch size for inference
         seq_len: Maximum sequence length (1081)
-        dtype: Tensor dtype (torch.float16 or torch.float32)
+        dtype: Tensor dtype (torch.bfloat16, torch.float16, or torch.float32)
     """
 
     def __init__(self, n_layer, n_state, n_head, batch_size, seq_len, dtype):
