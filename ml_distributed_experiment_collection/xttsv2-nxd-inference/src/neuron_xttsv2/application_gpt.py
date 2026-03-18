@@ -1,9 +1,13 @@
 """NeuronApplicationXTTSv2GPT: High-level interface for GPT Transformer on Neuron
 
-Architecture (Whisper pattern):
-  NeuronApplicationXTTSv2GPTPrefill  (NeuronApplicationBase) -- 1 ModelWrapper
-  NeuronApplicationXTTSv2GPTDecode   (NeuronApplicationBase) -- 1 ModelWrapper
-  NeuronApplicationXTTSv2GPT         (coordinator)           -- routes forward()
+Architecture (Separate Application / Method B):
+  NeuronApplicationXTTSv2GPTPrefill  (NeuronApplicationBase) -- 1 ModelWrapper (Prefill)
+  NeuronApplicationXTTSv2GPTDecode   (NeuronApplicationBase) -- 1 ModelWrapper (Decode)
+  NeuronApplicationXTTSv2GPT         (coordinator)           -- routes forward(), KV-Cache sync
+
+Note: "Method A" (Whisper pattern) uses a single Application with one nn.Module traced twice
+for Prefill and Decode shapes. XTTS v2 uses "Method B": two independent Applications with
+separate ScriptModules, enabling explicit KV-Cache transfer and Disaggregated Inference extensibility.
 
 NeuronApplicationBase stores a single self.traced_model (torch.jit.ScriptModule).
 Indexing with self.traced_model[0] / [1] does NOT work.

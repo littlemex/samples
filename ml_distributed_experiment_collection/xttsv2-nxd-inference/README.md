@@ -16,9 +16,13 @@ src/neuron_xttsv2/      # NxD Inference 統合の中核実装
   application_gpt.py    # NeuronApplicationXTTSv2GPT (コーディネーター)
   state_dict.py         # XTTSv2 チェックポイント変換
 examples/
-  compile.py            # モデルのコンパイル
-  run_inference.py      # 推論の実行
-  verify_structure.py   # 構造確認（CPU で実行可能）
+  compile.py                # モデルのコンパイル（引数ベース）
+  compile_bf16_script.py    # BF16 コンパイル（環境変数ベース、ブログ記事対応）
+  e2e_xttsv2_neuron.py      # E2E 検証：CPU vs Neuron 性能・精度比較
+  test_long_text_script.py  # 長文テキスト WER・レイテンシ測定
+  run_inference.py          # 推論の実行
+  benchmark_timing.py       # レイテンシ詳細ベンチマーク
+  verify_structure.py       # 構造確認（CPU で実行可能）
 ```
 
 ## 必要な環境
