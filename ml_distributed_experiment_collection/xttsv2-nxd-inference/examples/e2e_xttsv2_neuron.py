@@ -189,32 +189,45 @@ print(f"[OK] Neuron 平均レイテンシ: {neuron_mean:.2f}s (min={neuron_min:.
 print(f"[OK] Neuron 音声保存: {neuron_wav_path}")
 
 # ============================================================
-# 7. 精度比較: CPU vs Neuron
+# 7. 精度比較: CPU vs Neuron（メルスペクトログラム類似度）
 # ============================================================
+# NOTE: TTS は確率的サンプリング（temperature > 0）で動作するため、
+#       同じ入力でも CPU と Neuron の波形はサンプル単位では一致しない。
+#       スペクトル内容（音の周波数構成）で比較するのが適切。
 print("\n" + "=" * 60)
-print("[STEP 7] 精度比較 (CPU vs Neuron)")
+print("[STEP 7] 精度比較 (CPU vs Neuron - メルスペクトログラム類似度)")
 print("=" * 60)
-min_len = min(len(cpu_wav_out), len(neuron_wav_out))
-cpu_trim    = cpu_wav_out[:min_len].astype(np.float64)
-neuron_trim = neuron_wav_out[:min_len].astype(np.float64)
+from scipy.signal import stft as _stft
 
-mse      = float(np.mean((cpu_trim - neuron_trim) ** 2))
-cos_sim  = float(np.dot(cpu_trim, neuron_trim) /
-                 (np.linalg.norm(cpu_trim) * np.linalg.norm(neuron_trim) + 1e-8))
-sig_pow  = float(np.mean(cpu_trim ** 2))
-noise_pw = float(np.mean((cpu_trim - neuron_trim) ** 2))
-snr_db   = float(10 * np.log10(sig_pow / (noise_pw + 1e-10)))
+SR = 24000
+NPERSEG = 1024
 
-print(f"  MSE (低いほど良い):         {mse:.6f}")
-print(f"  コサイン類似度 (1.0が理想): {cos_sim:.6f}")
-print(f"  SNR (高いほど良い, dB):     {snr_db:.2f} dB")
+def _spectral_cosine(wav1, wav2):
+    """平均パワースペクトル間のコサイン類似度（音色・音高の類似度を測定）"""
+    min_len = min(len(wav1), len(wav2))
+    w1 = wav1[:min_len].astype(np.float32)
+    w2 = wav2[:min_len].astype(np.float32)
+    _, _, S1 = _stft(w1, fs=SR, nperseg=NPERSEG, noverlap=NPERSEG // 2)
+    _, _, S2 = _stft(w2, fs=SR, nperseg=NPERSEG, noverlap=NPERSEG // 2)
+    avg1 = (np.abs(S1) ** 2).mean(axis=1)
+    avg2 = (np.abs(S2) ** 2).mean(axis=1)
+    return float(np.dot(avg1, avg2) / (np.linalg.norm(avg1) * np.linalg.norm(avg2) + 1e-8))
 
-if cos_sim > 0.95:
-    quality = "PASS - Neuron 出力は CPU とほぼ一致"
-elif cos_sim > 0.80:
-    quality = "WARN - 軽微な差異あり"
+spectral_sim = _spectral_cosine(cpu_wav_out, neuron_wav_out)
+cpu_dur_s    = len(cpu_wav_out) / SR
+neuron_dur_s = len(neuron_wav_out) / SR
+dur_ratio    = neuron_dur_s / cpu_dur_s if cpu_dur_s > 0 else 0.0
+
+print(f"  スペクトル類似度 (1.0が理想): {spectral_sim:.4f}")
+print(f"  CPU 音声長:    {cpu_dur_s:.2f}s")
+print(f"  Neuron 音声長: {neuron_dur_s:.2f}s  (比率: {dur_ratio:.2f})")
+
+if spectral_sim > 0.90 and 0.7 <= dur_ratio <= 1.3:
+    quality = "PASS - スペクトル内容が CPU と一致"
+elif spectral_sim > 0.70:
+    quality = "WARN - スペクトル内容に軽微な差異あり"
 else:
-    quality = "FAIL - CPU ベースラインと大きく乖離"
+    quality = "FAIL - スペクトル内容が CPU と大きく乖離"
 print(f"  品質判定: {quality}")
 
 # ============================================================
@@ -227,14 +240,14 @@ speedup = cpu_mean / neuron_mean if neuron_mean > 0 else 0
 print(f"  CPU  平均レイテンシ: {cpu_mean:.2f}s (min={cpu_min:.2f}s)")
 print(f"  Neuron 平均レイテンシ: {neuron_mean:.2f}s (min={neuron_min:.2f}s)")
 print(f"  速度比 (CPU/Neuron):  {speedup:.2f}x")
-print(f"  Neuron 音声長:        {len(neuron_wav_out)/24000:.2f}s")
+print(f"  Neuron 音声長:        {neuron_dur_s:.2f}s")
 
 results = {
     "test_text": TEST_TEXT,
     "cpu": {"latencies_s": cpu_latencies, "mean_s": cpu_mean, "min_s": cpu_min},
     "neuron": {"latencies_s": neuron_latencies, "mean_s": neuron_mean, "min_s": neuron_min},
     "speedup": speedup,
-    "accuracy": {"mse": mse, "cosine_similarity": cos_sim, "snr_db": snr_db},
+    "accuracy": {"spectral_cosine": spectral_sim, "duration_ratio": dur_ratio},
     "quality": quality,
 }
 result_path = os.path.join(OUTPUT, "e2e_results.json")
