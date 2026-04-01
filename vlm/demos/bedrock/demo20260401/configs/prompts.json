@@ -1,0 +1,18 @@
+[
+  {
+    "id": "basic_japanese",
+    "text": "画像に含まれるすべてのテキストを抽出してください。日本語と英語の両方を認識してください。"
+  },
+  {
+    "id": "detailed_english",
+    "text": "Extract all text from this image. The text is written in Japanese and English. Please recognize Japanese characters accurately."
+  },
+  {
+    "id": "list_format_english",
+    "text": "Please extract all visible text from this image and output it as a list. Include both Japanese and English text."
+  },
+  {
+    "id": "simple_english",
+    "text": "Extract all text from this image."
+  }
+]

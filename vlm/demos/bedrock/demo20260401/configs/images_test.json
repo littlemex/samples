@@ -1,0 +1,14 @@
+[
+  {
+    "id": "sign_no_littering",
+    "path": "images/sign_no_littering.jpg",
+    "ground_truth": "ポイ捨て禁止\nNO LITTERING\n違反者には罰金が科せられます",
+    "description": "日英混在の看板"
+  },
+  {
+    "id": "receipt",
+    "path": "images/receipt.jpg",
+    "ground_truth": "お会計\n商品A: ¥1,200\n商品B: ¥800\n小計: ¥2,000\n消費税(10%): ¥200\n合計: ¥2,200\nありがとうございました",
+    "description": "レシート"
+  }
+]

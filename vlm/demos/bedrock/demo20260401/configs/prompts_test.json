@@ -1,0 +1,7 @@
+[
+  {
+    "id": "detailed_english",
+    "text": "Extract all text from this image. The text includes both Japanese and English. Please recognize Japanese characters accurately.",
+    "description": "詳細な英語プロンプト"
+  }
+]

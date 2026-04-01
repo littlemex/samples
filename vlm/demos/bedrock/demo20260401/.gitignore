@@ -1,0 +1,23 @@
+# ログファイル
+logs/*.json
+logs/*.log
+
+# Python キャッシュ
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 仮想環境
+venv/
+env/
+ENV/
+
+# IDE設定
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store

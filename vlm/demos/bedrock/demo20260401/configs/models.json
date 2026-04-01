@@ -1,0 +1,52 @@
+[
+  {
+    "id": "palmyra",
+    "model_id": "writer.palmyra-vision-7b",
+    "name": "Writer Palmyra Vision 7B",
+    "price_per_1k_input": 0.0003,
+    "price_per_1k_output": 0.0015,
+    "description": "7B parameter VLM by Writer"
+  },
+  {
+    "id": "nemotron",
+    "model_id": "nvidia.nemotron-nano-12b-v2",
+    "name": "NVIDIA Nemotron Nano 12B V2 VL BF16",
+    "price_per_1k_input": 0.0003,
+    "price_per_1k_output": 0.0015,
+    "description": "12B parameter VLM by NVIDIA"
+  },
+  {
+    "id": "nova2-lite",
+    "model_id": "us.amazon.nova-2-lite-v1:0",
+    "name": "Amazon Nova 2 Lite",
+    "price_per_1k_input": 0.0003,
+    "price_per_1k_output": 0.0015,
+    "description": "Amazon's lightweight multimodal model (requires inference profile)",
+    "requires_inference_profile": true
+  },
+  {
+    "id": "kimi",
+    "model_id": "moonshotai.kimi-k2.5",
+    "name": "Moonshot AI Kimi K2.5",
+    "price_per_1k_input": 0.0003,
+    "price_per_1k_output": 0.0015,
+    "description": "Multimodal VLM by Moonshot AI"
+  },
+  {
+    "id": "qwen3",
+    "model_id": "qwen.qwen3-vl-235b-a22b",
+    "name": "Qwen3 VL 235B-A22B (MoE)",
+    "price_per_1k_input": 0.0003,
+    "price_per_1k_output": 0.0015,
+    "description": "MoE VLM with 235B total, 22B active parameters"
+  },
+  {
+    "id": "claude-opus",
+    "model_id": "us.anthropic.claude-opus-4-6-v1",
+    "name": "Anthropic Claude Opus 4.6",
+    "price_per_1k_input": 0.015,
+    "price_per_1k_output": 0.075,
+    "description": "High-accuracy VLM by Anthropic (requires inference profile)",
+    "requires_inference_profile": true
+  }
+]

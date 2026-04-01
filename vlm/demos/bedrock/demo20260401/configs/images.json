@@ -1,0 +1,32 @@
+[
+  {
+    "id": "sign_no_littering",
+    "path": "images/sign_no_littering.jpg",
+    "ground_truth": "ポイ捨て禁止\nNO LITTERING\n違反者には罰金が科せられます",
+    "description": "Japanese/English bilingual sign about littering prohibition"
+  },
+  {
+    "id": "receipt",
+    "path": "images/receipt.jpg",
+    "ground_truth": "領収書\n株式会社サンプル商店\n2026年4月1日\n商品A: ¥1,200\n商品B: ¥2,500\n消費税: ¥370\n合計: ¥4,070\nありがとうございました",
+    "description": "Japanese receipt with items and prices"
+  },
+  {
+    "id": "menu",
+    "path": "images/menu.jpg",
+    "ground_truth": "本日のメニュー\nランチセット\n日替わり定食: ¥950\nカレーライス: ¥850\nラーメン: ¥750\nドリンク付き",
+    "description": "Japanese restaurant menu"
+  },
+  {
+    "id": "form",
+    "path": "images/form.jpg",
+    "ground_truth": "申込書\nお名前:\nご住所:\n電話番号:\nメールアドレス:\nご記入の上、提出してください。",
+    "description": "Japanese application form"
+  },
+  {
+    "id": "event_info",
+    "path": "images/event_info.jpg",
+    "ground_truth": "イベント開催のお知らせ\n春のフェスティバル\n日時: 2026年4月15日（土）10:00-16:00\n場所: 中央公園\n入場無料\nご家族でお楽しみください",
+    "description": "Japanese event announcement poster"
+  }
+]

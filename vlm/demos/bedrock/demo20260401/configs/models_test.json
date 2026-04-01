@@ -1,0 +1,16 @@
+[
+  {
+    "id": "qwen3",
+    "model_id": "qwen.qwen3-vl-235b-a22b",
+    "name": "Qwen3 VL 235B-A22B (MoE)",
+    "price_per_1k_input": 0.0003,
+    "price_per_1k_output": 0.0015
+  },
+  {
+    "id": "nova2-lite",
+    "model_id": "us.amazon.nova-2-lite-v1:0",
+    "name": "Amazon Nova 2 Lite",
+    "price_per_1k_input": 0.0003,
+    "price_per_1k_output": 0.0015
+  }
+]
