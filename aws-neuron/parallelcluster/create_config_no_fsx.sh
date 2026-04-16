@@ -67,6 +67,11 @@ fi
 echo "export PUBLIC_SUBNET_ID=${PUBLIC_SUBNET_ID}" >> env_vars
 echo "[INFO] PUBLIC_SUBNET_ID = ${PUBLIC_SUBNET_ID}"
 
+# HeadNode 用に最初のパブリックサブネットを抽出（カンマ区切りの場合）
+export HEAD_NODE_SUBNET_ID=$(echo ${PUBLIC_SUBNET_ID} | cut -d',' -f1)
+echo "export HEAD_NODE_SUBNET_ID=${HEAD_NODE_SUBNET_ID}" >> env_vars
+echo "[INFO] HEAD_NODE_SUBNET_ID = ${HEAD_NODE_SUBNET_ID}"
+
 # セキュリティグループ ID を取得
 export SECURITY_GROUP=$(aws cloudformation describe-stacks \
     --stack-name ${STACK_NAME} \
@@ -150,6 +155,7 @@ echo "[INFO] Summary:"
 echo "  AWS_REGION: ${AWS_REGION}"
 echo "  VPC_ID: ${VPC_ID}"
 echo "  PUBLIC_SUBNET_ID: ${PUBLIC_SUBNET_ID}"
+echo "  HEAD_NODE_SUBNET_ID: ${HEAD_NODE_SUBNET_ID}"
 echo "  PRIVATE_SUBNET_ID: ${PRIVATE_SUBNET_ID} (AZ: ${CR_AZ})"
 echo "  SECURITY_GROUP: ${SECURITY_GROUP}"
 echo "  CR_ID: ${CR_ID}"
