@@ -15,12 +15,14 @@ echo "[INFO] Date: $(date)"
 if [ ! -d "/opt/neuron_venv" ]; then
     echo "[INFO] Neuron SDK not found, installing..."
 
-    # Copy and run installation script
+    # Check if installation script exists locally
     if [ -f "/home/ubuntu/install-neuron-sdk.sh" ]; then
+        echo "[INFO] Using local installation script"
         sudo bash /home/ubuntu/install-neuron-sdk.sh
     else
-        echo "[ERROR] Installation script not found"
-        exit 1
+        echo "[INFO] Downloading installation script from GitHub"
+        curl -o /tmp/install-neuron-sdk-2.29.sh https://raw.githubusercontent.com/littlemex/samples/main/aws-neuron/setup/install-neuron-sdk-2.29.sh
+        sudo bash /tmp/install-neuron-sdk-2.29.sh
     fi
 fi
 
