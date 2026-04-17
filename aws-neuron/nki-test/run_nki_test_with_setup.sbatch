@@ -1,4 +1,3 @@
-ubuntu@ip-10-0-0-186:~/nki-test$ cat run_nki_test_with_setup.sbatch 
 #!/bin/bash
 #SBATCH --job-name=nki_test
 #SBATCH --partition=compute-trn2
