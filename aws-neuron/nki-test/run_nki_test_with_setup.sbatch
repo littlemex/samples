@@ -1,10 +1,11 @@
+ubuntu@ip-10-0-0-186:~/nki-test$ cat run_nki_test_with_setup.sbatch 
 #!/bin/bash
 #SBATCH --job-name=nki_test
-#SBATCH --partition=trn2-queue
+#SBATCH --partition=compute-trn2
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=%x_%j.out
-#SBATCH --error=%x_%j.err
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
 
 echo "[INFO] Starting NKI test job"
 echo "[INFO] Job ID: $SLURM_JOB_ID"
@@ -34,6 +35,6 @@ python3 -c "import nki; print(f'[OK] NKI version: {nki.__version__}')" || exit 1
 
 # Run test script
 echo "[INFO] Running NKI test"
-python3 /home/ubuntu/test_nki.py
+python3 /home/ubuntu/nki-test/test_nki.py
 
 echo "[INFO] NKI test job completed"
