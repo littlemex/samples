@@ -1,5 +1,5 @@
 #!/bin/bash
-# ParallelCluster 環境変数収集スクリプト（FSx なし版）
+# ParallelCluster 環境変数収集スクリプト（FSx オプション対応版）
 # Usage: bash create_config.sh <CR_ID>
 
 set -e
@@ -143,6 +143,54 @@ fi
 echo "export PRIVATE_SUBNET_ID=${PRIVATE_SUBNET_ID}" >> env_vars
 echo "[INFO] PRIVATE_SUBNET_ID = ${PRIVATE_SUBNET_ID} (AZ: ${CR_AZ})"
 
+# ============================================================================
+# FSx 関連の情報を取得（オプション）
+# ============================================================================
+echo ""
+echo "[INFO] Checking for FSx filesystems..."
+
+# FSx Lustre Filesystem ID を取得
+export FSX_ID=$(aws cloudformation describe-stacks \
+    --stack-name ${STACK_NAME} \
+    --query 'Stacks[0].Outputs[?OutputKey==`FSxLustreFilesystemId`].OutputValue' \
+    --region ${AWS_REGION} \
+    --output text 2>/dev/null)
+
+if [ -n "$FSX_ID" ] && [ "$FSX_ID" != "None" ]; then
+    echo "export FSX_ID=${FSX_ID}" >> env_vars
+    echo "[INFO] FSX_ID = ${FSX_ID}"
+
+    # FSx Lustre Mountname を取得
+    export FSX_MOUNTNAME=$(aws cloudformation describe-stacks \
+        --stack-name ${STACK_NAME} \
+        --query 'Stacks[0].Outputs[?OutputKey==`FSxLustreFilesystemMountname`].OutputValue' \
+        --region ${AWS_REGION} \
+        --output text 2>/dev/null)
+
+    if [ -n "$FSX_MOUNTNAME" ] && [ "$FSX_MOUNTNAME" != "None" ]; then
+        echo "export FSX_MOUNTNAME=${FSX_MOUNTNAME}" >> env_vars
+        echo "[INFO] FSX_MOUNTNAME = ${FSX_MOUNTNAME}"
+    else
+        echo "[WARNING] FSx Lustre Mountname not found"
+    fi
+else
+    echo "[INFO] FSx Lustre not found in stack (optional)"
+fi
+
+# FSx OpenZFS Root Volume ID を取得
+export FSXO_ID=$(aws cloudformation describe-stacks \
+    --stack-name ${STACK_NAME} \
+    --query 'Stacks[0].Outputs[?OutputKey==`FSxORootVolumeId`].OutputValue' \
+    --region ${AWS_REGION} \
+    --output text 2>/dev/null)
+
+if [ -n "$FSXO_ID" ] && [ "$FSXO_ID" != "None" ]; then
+    echo "export FSXO_ID=${FSXO_ID}" >> env_vars
+    echo "[INFO] FSXO_ID = ${FSXO_ID}"
+else
+    echo "[INFO] FSx OpenZFS not found in stack (optional)"
+fi
+
 # SSH キー名（デフォルト）
 export KEY_NAME="${KEY_NAME:-pcluster-trn2-key}"
 echo "export KEY_NAME=${KEY_NAME}" >> env_vars
@@ -162,3 +210,12 @@ echo "  CR_ID: ${CR_ID}"
 echo "  INSTANCE_TYPE: ${INSTANCE_TYPE}"
 echo "  INSTANCE_COUNT: ${INSTANCE_COUNT}"
 echo "  KEY_NAME: ${KEY_NAME}"
+
+# FSx 情報がある場合のみ表示
+if [ -n "$FSX_ID" ] && [ "$FSX_ID" != "None" ]; then
+    echo "  FSX_ID: ${FSX_ID}"
+    echo "  FSX_MOUNTNAME: ${FSX_MOUNTNAME}"
+fi
+if [ -n "$FSXO_ID" ] && [ "$FSXO_ID" != "None" ]; then
+    echo "  FSXO_ID: ${FSXO_ID}"
+fi
