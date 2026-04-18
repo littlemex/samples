@@ -53,3 +53,4 @@ echo "To test with custom model:"
 echo "  export MODEL_ID=meta-llama/Llama-3.2-3B-Instruct"
 echo "  export TENSOR_PARALLEL_SIZE=2"
 echo "  sbatch vllm-inference.sbatch"
+
