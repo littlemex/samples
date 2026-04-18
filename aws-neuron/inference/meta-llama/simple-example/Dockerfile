@@ -1,6 +1,9 @@
 # AWS 公式 vLLM Neuron DLC イメージを使用
 FROM public.ecr.aws/neuron/pytorch-inference-vllm-neuronx:0.16.0-neuronx-py312-sdk2.29.0-ubuntu24.04
 
+# DLC Bug
+RUN ["rm", "-rf", "/["]
+
 # 作業ディレクトリ
 WORKDIR /workspace
 
@@ -13,4 +16,3 @@ COPY verify_installation.py /workspace/
 
 # デフォルトのエントリーポイント
 CMD ["/bin/bash"]
-
