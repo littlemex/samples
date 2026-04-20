@@ -1,0 +1,256 @@
+# Week 1: Simulation Parameters
+# Isaac Sim 4.5.0シミュレーション設定
+
+# シミュレーション全般設定
+simulation:
+  name: "Week1 Iris Flight Demo"
+  version: "1.0.0"
+  physics_dt: 0.016667  # 60Hz (1/60)
+  rendering_dt: 0.033333  # 30Hz (1/30)
+  time_scale: 1.0  # リアルタイム
+  max_duration: 300.0  # 最大5分
+
+# 物理エンジン設定 (PhysX 5)
+physics:
+  engine: PhysX5
+  gravity: [0.0, 0.0, -9.81]  # m/s^2
+  
+  # ソルバー設定
+  solver:
+    position_iterations: 4
+    velocity_iterations: 1
+    stabilization_threshold: 0.001
+  
+  # 衝突検出
+  collision:
+    enabled: true
+    distance_threshold: 0.1  # meters
+    contact_offset: 0.02  # meters
+  
+  # 空気抵抗
+  air_resistance:
+    enabled: true
+    density: 1.225  # kg/m^3 (sea level)
+    drag_coefficient: 0.47  # 球体の抗力係数
+
+# Irisドローン設定
+iris_drone:
+  model_path: /workspace/models/iris.usd
+  
+  # 物理パラメータ
+  physics:
+    mass: 1.5  # kg
+    inertia: [0.029125, 0.029125, 0.055225]  # kg*m^2
+    center_of_mass: [0.0, 0.0, 0.0]  # m
+  
+  # 初期状態
+  initial_state:
+    position: [0.0, 0.0, 0.5]  # m
+    orientation: [0.0, 0.0, 0.0, 1.0]  # quaternion (x, y, z, w)
+    linear_velocity: [0.0, 0.0, 0.0]  # m/s
+    angular_velocity: [0.0, 0.0, 0.0]  # rad/s
+  
+  # モーター設定（4ローター）
+  motors:
+    count: 4
+    max_thrust: 10.0  # N per motor
+    max_rpm: 10000
+    spin_direction: [1, -1, 1, -1]  # CW/CCW
+    time_constant: 0.02  # seconds
+    positions:  # ローター位置 (x, y, z)
+      - [0.13, -0.22, 0.0]  # front-right
+      - [-0.13, 0.22, 0.0]  # back-left
+      - [0.13, 0.22, 0.0]   # front-left
+      - [-0.13, -0.22, 0.0] # back-right
+
+# センサー設定
+sensors:
+  # RGBカメラ
+  camera_rgb:
+    enabled: true
+    type: RGB
+    resolution: [640, 480]
+    fov: 90.0  # degrees
+    position: [0.2, 0.0, 0.0]  # ドローン前方
+    orientation: [0.0, 0.0, 0.0, 1.0]
+    frame_rate: 30.0  # Hz
+    
+  # Depthカメラ
+  camera_depth:
+    enabled: true
+    type: Depth
+    resolution: [640, 480]
+    fov: 90.0
+    position: [0.2, 0.0, 0.0]
+    orientation: [0.0, 0.0, 0.0, 1.0]
+    near_clip: 0.1  # m
+    far_clip: 100.0  # m
+    frame_rate: 30.0  # Hz
+  
+  # IMU
+  imu:
+    enabled: true
+    position: [0.0, 0.0, 0.0]
+    update_rate: 100.0  # Hz
+    noise:
+      accelerometer: 0.01  # m/s^2
+      gyroscope: 0.001  # rad/s
+  
+  # GPS
+  gps:
+    enabled: true
+    position: [0.0, 0.0, 0.1]
+    update_rate: 10.0  # Hz
+    noise:
+      horizontal: 0.5  # meters
+      vertical: 1.0  # meters
+
+# 環境設定
+environment:
+  # グラウンドプレーン
+  ground_plane:
+    enabled: true
+    size: 100.0  # meters
+    position: [0.0, 0.0, 0.0]
+    material: default
+    color: [0.5, 0.5, 0.5, 1.0]  # RGBA
+  
+  # 照明
+  lighting:
+    type: dome
+    intensity: 1000.0  # lux
+    color: [1.0, 1.0, 1.0]  # RGB
+    ambient_intensity: 0.3
+  
+  # 天候
+  weather:
+    enabled: false
+    type: clear  # clear, cloudy, rain, fog
+    wind:
+      enabled: false
+      speed: 0.0  # m/s
+      direction: [1.0, 0.0, 0.0]
+
+# レンダリング設定
+rendering:
+  enabled: true
+  mode: RayTracing  # RayTracing, PathTracing, Rasterization
+  quality: medium  # low, medium, high, ultra
+  
+  # アンチエイリアシング
+  antialiasing:
+    enabled: true
+    type: TAA  # TAA, FXAA, DLSS
+  
+  # シャドウ
+  shadows:
+    enabled: true
+    quality: medium
+    distance: 100.0  # meters
+  
+  # ポストプロセス
+  post_processing:
+    bloom: true
+    motion_blur: false
+    depth_of_field: false
+
+# ミッション設定
+mission:
+  type: waypoint  # waypoint, manual, follow
+  
+  # ウェイポイント
+  waypoints:
+    - position: [0.0, 0.0, 2.0]
+      description: "Takeoff to 2m"
+      tolerance: 0.5
+    
+    - position: [5.0, 0.0, 2.0]
+      description: "Move forward 5m"
+      tolerance: 0.5
+    
+    - position: [5.0, 5.0, 2.0]
+      description: "Move right 5m"
+      tolerance: 0.5
+    
+    - position: [0.0, 5.0, 2.0]
+      description: "Move backward 5m"
+      tolerance: 0.5
+    
+    - position: [0.0, 0.0, 2.0]
+      description: "Return to start"
+      tolerance: 0.5
+    
+    - position: [0.0, 0.0, 0.5]
+      description: "Land"
+      tolerance: 0.3
+  
+  # 制御パラメータ
+  control:
+    max_velocity: 2.0  # m/s
+    max_acceleration: 1.0  # m/s^2
+    position_gain: 1.0
+    velocity_gain: 0.5
+    hover_thrust: 0.59  # normalized (0-1)
+
+# パフォーマンス最適化
+performance:
+  # LOD (Level of Detail)
+  lod:
+    enabled: true
+    distances: [10.0, 50.0, 100.0]
+  
+  # カリング
+  culling:
+    frustum: true
+    occlusion: false
+    distance: 500.0  # meters
+  
+  # バッチング
+  batching:
+    static: true
+    dynamic: false
+  
+  # マルチスレッド
+  threading:
+    physics: true
+    rendering: true
+    num_workers: 4
+
+# デバッグ・可視化
+debug:
+  # デバッグ表示
+  show_axes: false
+  show_grid: true
+  show_bounding_boxes: false
+  show_colliders: false
+  show_sensors: false
+  show_trajectories: true
+  
+  # ログレベル
+  log_level: INFO  # DEBUG, INFO, WARNING, ERROR
+  
+  # プロファイリング
+  profiling:
+    enabled: false
+    output_file: /workspace/week1-isaac-pegasus/data/logs/profiling.json
+
+# Week 2への連携設定
+week2_preparation:
+  # Cosmos用データエクスポート
+  export:
+    enabled: true
+    format: video  # video, images, usd
+    output_path: /workspace/week1-isaac-pegasus/data/cosmos_input
+    
+    # ビデオ設定
+    video:
+      codec: h264
+      bitrate: 10000  # kbps
+      fps: 30
+      resolution: [1280, 720]
+    
+    # メタデータ
+    metadata:
+      include_camera_params: true
+      include_trajectory: true
+      include_sensor_data: true
