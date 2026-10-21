@@ -1,0 +1,5 @@
+# Generated on first run by server.py / make_sample_pdf.py -- see README.md
+sample.pdf
+sample.ground_truth.json
+.venv/
+__pycache__/

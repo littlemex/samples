@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Indra OCR ローカルデモ</title>
+<style>
+/* Colors, fonts, radii and spacing below are AWS Cloudscape Design System
+ * tokens (Apache-2.0, https://github.com/cloudscape-design/design-tokens),
+ * copied as literal values from the compiled @cloudscape-design/design-tokens
+ * package (visual-refresh theme) so this page looks like the AWS console
+ * without pulling in Cloudscape's own React components -- no npm, no build
+ * step, this file is still just plain HTML/CSS/JS. Token names are kept in
+ * the comments next to each value so they can be re-synced later. */
+:root{
+  --ink:#0f141a;            /* color-text-body-default / color-text-heading-default */
+  --ink2:#424650;           /* color-text-heading-secondary / color-text-interactive-default */
+  --bg:#f6f6f9;             /* color-background-cell-shaded */
+  --card:#ffffff;           /* color-background-container-content */
+  --line:#c6c6cd;           /* color-border-divider-default */
+  --line2:#ebebf0;          /* color-border-divider-secondary */
+  --link:#006ce0;           /* color-text-link-default */
+  --link-hover:#002b66;     /* color-text-link-hover */
+  --btn-bg:#006ce0;         /* color-background-button-primary-default */
+  --btn-bg-hover:#002b66;   /* color-background-button-primary-hover */
+  --btn-bg-disabled:#ebebf0;/* color-background-button-primary-disabled */
+  --btn-text-disabled:#8c8c94; /* color-text-button-primary-disabled */
+  --info-bg:#f0fbff;        /* color-background-status-info */
+  --info-text:#006ce0;      /* color-text-status-info */
+  --success-bg:#effff1;     /* color-background-status-success */
+  --success-text:#00802f;   /* color-text-status-success */
+  --error-bg:#fff5f5;       /* color-background-status-error */
+  --error-text:#db0000;     /* color-text-status-error */
+  --input-border:#8c8c94;   /* color-border-input-default */
+  --input-border-focus:#006ce0; /* color-border-input-focused */
+  --r-button:20px;          /* border-radius-button (visual-refresh pill buttons) */
+  --r-input:8px;            /* border-radius-input */
+  --r-container:16px;       /* border-radius-container */
+  --font-base:'Open Sans','Helvetica Neue',Roboto,Arial,sans-serif; /* font-family-base */
+  --font-mono:Monaco,Menlo,Consolas,'Courier Prime',Courier,'Courier New',monospace; /* font-family-monospace */
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:20px; /* body-m */
+font-family:var(--font-base),"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif}
+.wrap{max-width:860px;margin:0 auto;padding:28px 20px 60px}
+h1{font-size:24px;line-height:30px;margin:0 0 6px;font-weight:700} /* heading-xl */
+p.lead{color:var(--ink2);margin:0 0 22px}
+a{color:var(--link)}
+a:hover{color:var(--link-hover)}
+.card{background:var(--card);border:1px solid var(--line2);border-radius:var(--r-container);
+padding:20px 20px 18px;margin:0 0 20px;box-shadow:0 1px 1px 0 rgba(0,0,0,.08)}
+.card h2{font-size:18px;line-height:22px;margin:0 0 12px;font-weight:700} /* heading-m */
+button{background:var(--btn-bg);color:#fff;border:none;border-radius:var(--r-button);
+padding:8px 20px;font-size:14px;font-family:var(--font-base),inherit;cursor:pointer}
+button:hover:not(:disabled){background:var(--btn-bg-hover)}
+button:disabled{background:var(--btn-bg-disabled);color:var(--btn-text-disabled);cursor:default}
+button.secondary{background:#fff;color:var(--link);border:2px solid var(--link)}
+button.secondary:hover{color:var(--link-hover);border-color:var(--link-hover)}
+select{border:1px solid var(--input-border);border-radius:var(--r-input);padding:6px 10px;
+font-size:14px;font-family:inherit;background:#fff;color:var(--ink)}
+select:focus,input[type=file]:focus{outline:2px solid var(--input-border-focus);outline-offset:1px}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:10px 0}
+#status{font-size:12px;line-height:16px;color:var(--info-text);padding:6px 12px;
+border-radius:var(--r-input);background:var(--info-bg);display:inline-block}
+#status.err{background:var(--error-bg);color:var(--error-text)}
+.page{border:1px solid var(--line2);border-radius:var(--r-input);margin:12px 0;overflow:hidden}
+.page h3{margin:0;padding:8px 14px;background:var(--bg);font-size:14px;font-weight:700;border-bottom:1px solid var(--line2)}
+.page pre{margin:0;padding:14px;white-space:pre-wrap;word-break:break-word;font-size:13px;
+font-family:var(--font-mono);background:#fff;max-height:340px;overflow:auto}
+.meta{font-size:12px;color:var(--ink2);padding:6px 14px 0}
+details{margin-top:10px;font-size:13px;color:var(--ink2)}
+details summary{cursor:pointer;color:var(--link)}
+.err-box{background:var(--error-bg);color:var(--error-text);border-radius:12px;padding:12px 16px;margin:10px 0} /* border-radius-alert */
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Indra OCR ローカルデモ</h1>
+<p class="lead">AWSは使いません。全部このマシン上の indra-ocr (<a href="https://github.com/datalab-to/indra" target="_blank">github.com/datalab-to/indra</a>) で処理します。</p>
+
+<p><span id="status">確認中...</span></p>
+
+<div class="card">
+<h2>1. 付属のサンプルPDFで試す</h2>
+<p style="margin:0 0 14px;color:var(--ink2);font-size:13px">日本語の段落・表・請求書情報を含む3ページのPDF(日本語フォントが無い環境では英語版になります)。</p>
+<div class="row">
+  <button id="runSample">サンプルPDFを実行</button>
+  <a href="/sample.pdf" target="_blank" style="font-size:13px">PDFを開く →</a>
+  <select id="formatSample">
+    <option value="md">Markdown</option>
+    <option value="text">テキストのみ</option>
+    <option value="json">JSON (行・座標つき)</option>
+  </select>
+</div>
+<details id="gtBox" style="display:none">
+  <summary>このサンプルの正解テキストを見る</summary>
+  <pre id="gtPre" style="white-space:pre-wrap;font-size:12px;font-family:var(--font-mono)"></pre>
+</details>
+</div>
+
+<div class="card">
+<h2>2. 自分のファイルを試す</h2>
+<p style="margin:0 0 14px;color:var(--ink2);font-size:13px">PDF または画像 (PNG/JPG) をそのまま送ります。サーバーはこのローカルプロセスだけです。</p>
+<div class="row">
+  <input type="file" id="fileInput" accept="application/pdf,image/*">
+  <select id="formatUpload">
+    <option value="md">Markdown</option>
+    <option value="text">テキストのみ</option>
+    <option value="json">JSON (行・座標つき)</option>
+  </select>
+  <button class="secondary" id="runUpload" disabled>このファイルを実行</button>
+</div>
+</div>
+
+<div id="results"></div>
+</div>
+
+<script>
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+
+async function pollStatus() {
+  try {
+    const r = await fetch('/status');
+    const d = await r.json();
+    if (d.ready) {
+      statusEl.textContent = 'モデル読み込み完了。準備OKです。';
+      statusEl.className = '';
+      return true;
+    }
+    if (d.error) {
+      statusEl.textContent = 'モデルの読み込みに失敗しました: ' + d.error;
+      statusEl.className = 'err';
+      return true;
+    }
+    statusEl.textContent = 'モデルを読み込み中... (初回は Hugging Face からのダウンロードが入ります)';
+    statusEl.className = '';
+    return false;
+  } catch (e) {
+    statusEl.textContent = 'サーバーに接続できません: ' + e;
+    statusEl.className = 'err';
+    return false;
+  }
+}
+
+(async function () {
+  while (!(await pollStatus())) {
+    await new Promise(r => setTimeout(r, 1500));
+  }
+})();
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderPages(data, elapsedClientMs) {
+  resultsEl.innerHTML = '';
+  if (data.error) {
+    const box = document.createElement('div');
+    box.className = 'err-box';
+    box.textContent = data.error;
+    resultsEl.appendChild(box);
+    return;
+  }
+  const summary = document.createElement('p');
+  summary.style.fontSize = '13px';
+  summary.style.color = 'var(--ink2)';
+  summary.textContent = `${data.pages.length} ページ / サーバー側処理 ${data.elapsed_s}秒`
+    + (elapsedClientMs != null ? ` / 往復合計 ${(elapsedClientMs / 1000).toFixed(2)}秒` : '');
+  resultsEl.appendChild(summary);
+  for (const p of data.pages) {
+    const card = document.createElement('div');
+    card.className = 'page';
+    const h3 = document.createElement('h3');
+    h3.textContent = `ページ ${p.page + 1} (${p.source})`;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = p.note || '';
+    const pre = document.createElement('pre');
+    pre.textContent = p.body;  // textContent, never innerHTML: OCR output is untrusted text
+    card.appendChild(h3);
+    if (p.note) card.appendChild(meta);
+    card.appendChild(pre);
+    resultsEl.appendChild(card);
+  }
+}
+
+async function runOcr(contentB64, filename, format, button) {
+  button.disabled = true;
+  resultsEl.innerHTML = '<p style="color:var(--ink2);font-size:13px">実行中...</p>';
+  const t0 = performance.now();
+  try {
+    const r = await fetch('/ocr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content_b64: contentB64, filename, format }),
+    });
+    const data = await r.json();
+    renderPages(data, performance.now() - t0);
+  } catch (e) {
+    renderPages({ error: String(e) });
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.getElementById('runSample').addEventListener('click', async (ev) => {
+  const format = document.getElementById('formatSample').value;
+  const resp = await fetch('/sample.pdf');
+  const blob = await resp.blob();
+  const b64 = await new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.readAsDataURL(blob);
+  });
+  runOcr(b64, 'sample.pdf', format, ev.target);
+});
+
+document.getElementById('gtBox').style.display = 'block';
+fetch('/sample.ground_truth.json').then(r => r.ok ? r.json() : null).then(gt => {
+  if (gt) document.getElementById('gtPre').textContent = JSON.stringify(gt, null, 2);
+  else document.getElementById('gtBox').style.display = 'none';
+}).catch(() => { document.getElementById('gtBox').style.display = 'none'; });
+
+const fileInput = document.getElementById('fileInput');
+const runUploadBtn = document.getElementById('runUpload');
+fileInput.addEventListener('change', () => {
+  runUploadBtn.disabled = !fileInput.files.length;
+});
+runUploadBtn.addEventListener('click', async (ev) => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  const format = document.getElementById('formatUpload').value;
+  const b64 = await fileToBase64(file);
+  runOcr(b64, file.name, format, ev.target);
+});
+</script>
+</body>
+</html>

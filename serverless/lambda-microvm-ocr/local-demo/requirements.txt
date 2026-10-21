@@ -1,0 +1,5 @@
+# Deliberately short: no Flask/FastAPI (server.py uses only
+# http.server/stdlib) and no Node/npm for the UI (index.html is plain
+# HTML/CSS/JS with no CDN scripts).
+indra-ocr==1.1.2
+pillow
