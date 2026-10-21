@@ -5,6 +5,11 @@ CPU-only OCR model) inside an [AWS Lambda MicroVM](https://aws.amazon.com/lambda
 and fronts it with a small orchestrator Lambda behind an HTTP API, so a caller can
 send an image or PDF over plain HTTP and get Markdown/text/JSON back.
 
+Want to try the same OCR engine with no AWS account, no deploy, just a
+browser and a PDF? See [`local-demo/`](local-demo/) -- a local-only web UI,
+stdlib Python + plain HTML/CSS/JS, no npm/Node, with a default sample PDF
+generated on first run.
+
 ## Why a MicroVM for a model this small
 
 Indra OCR is tiny (CPU-only, ~1M parameters for the recognizer, ~7M for the whole
