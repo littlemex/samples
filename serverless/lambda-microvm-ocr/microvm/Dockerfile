@@ -21,7 +21,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENV HF_HOME=/opt/hf-cache \
-    INDRA_OCR_MODEL_DIR=/opt/indra-ocr/models \
     INDRA_OCR_THREADS=2 \
     PYTHONUNBUFFERED=1
 
@@ -30,16 +29,21 @@ RUN pip install --no-cache-dir indra-ocr==1.1.2 pillow
 # Bake the model weights (det.onnx/rec.onnx/order.onnx/meta.json, a few MB --
 # indra-ocr's own pitch is a 1M-parameter recognizer, 7M for the whole default
 # pipeline) into the image at build time, so a running MicroVM makes no
-# Hugging Face network call. model_dir() with no `path=` downloads (or reuses
-# the HF cache) and returns that cache's snapshot directory; copying it flat
-# into INDRA_OCR_MODEL_DIR makes the "local folder" lookup branch in
-# indra_ocr.models.model_dir() succeed at runtime with zero network.
+# Hugging Face network call. model_dir(path=None) checks the INDRA_OCR_MODEL_DIR
+# env var FIRST and, if set, takes the "local folder, must already have files"
+# branch instead of downloading -- so INDRA_OCR_MODEL_DIR must NOT be set yet at
+# this step (confirmed live: setting it earlier made this RUN fail with
+# "ModelError: the model folder /opt/indra-ocr/models lacks det.onnx, rec.onnx,
+# meta.json", a chicken-and-egg bug since the download hadn't populated that
+# path yet). The env var is set only after this step copies the weights there.
 RUN python3 -c "\
 import shutil; \
 from indra_ocr.models import model_dir; \
 src = model_dir(); \
 print('downloaded model to', src); \
 shutil.copytree(src, '/opt/indra-ocr/models', dirs_exist_ok=True)"
+
+ENV INDRA_OCR_MODEL_DIR=/opt/indra-ocr/models
 
 COPY sidecar.py make_sample.py /opt/indra-ocr/
 RUN python3 /opt/indra-ocr/make_sample.py /opt/indra-ocr/sample.png

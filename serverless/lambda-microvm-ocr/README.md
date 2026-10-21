@@ -61,6 +61,28 @@ down outside AWS's internal docs. This sample is a much smaller relative of that
 one: OCR is stateless and the model is baked into the image, so there is no EFS,
 no VPC/NAT, no per-tenant DynamoDB registry, and no Bedrock wiring here.
 
+## The API is never unauthenticated
+
+Both routes on the HTTP API (`POST /ocr`, `GET /health`) are declared with
+`AuthorizationType: AWS_IAM` in [`cfn/template.yaml`](cfn/template.yaml), not the
+`Target:` shorthand on `AWS::ApiGatewayV2::Api` (which creates a `$default`
+route with **no** authorization at all). Every request must be SigV4-signed by
+an IAM identity the caller's account grants `execute-api:Invoke` on this API's
+ARN; an unsigned request is rejected by API Gateway with `403` before it ever
+reaches the orchestrator Lambda or touches the MicroVM.
+[`scripts/sigv4_request.py`](scripts/sigv4_request.py) signs requests with
+whatever credentials boto3's default chain finds (the same ones your shell's
+`aws` CLI commands use), and
+[`scripts/invoke_example.sh`](scripts/invoke_example.sh) deliberately also
+sends one *unsigned* `curl` to `/health` and expects (and checks for) `403`.
+
+This is a real, enforced gate, not a hope: a stack deployed with this template
+has no code path for an unauthenticated internet request to reach either the
+orchestrator or the MicroVM. If you need the API reachable with no IAM
+credentials at all (e.g. a public-facing product), put a proper authorizer
+(Lambda authorizer / JWT / Cognito) in front instead of removing `AWS_IAM` --
+do not ship this with `AuthorizationType: NONE`.
+
 ## "S3 Files" does not reach a MicroVM -- here is what to use instead
 
 Whoever is deploying this may reasonably expect a Lambda function's "S3 Files"
@@ -108,30 +130,59 @@ beyond `--platform=linux/arm64` on the `FROM` line.
 
 ## What was actually verified, and what was not
 
-Being specific about this rather than implying more than was done:
+Being specific about this rather than implying more than was done. This
+section originally said the stack had never been deployed; it has been since,
+into a throwaway AWS sandbox account, and torn down again afterward.
 
-- **Verified, locally, end to end:** `microvm/sidecar.py` loads indra-ocr once,
-  answers the three lifecycle hook paths with the right shapes, and `/ocr`
-  correctly transcribes a real Japanese test image (exact match against known
-  ground truth) in **0.15-0.19s per request** once the model is loaded -- run
-  directly with `python3 microvm/sidecar.py` against a locally-downloaded model
-  directory, no AWS involved. `orchestrator/handler.py`'s request-validation
-  branches (missing fields, bad `format`, routing) pass unit tests with no AWS
-  credentials in [`tests/test_handler_validation.py`](tests/test_handler_validation.py).
-  `cfn/template.yaml` passes `aws cloudformation validate-template` against a
-  real account (confirms YAML/intrinsic-function syntax and that
-  `CAPABILITY_NAMED_IAM` is correctly required for the `AWS::IAM::Role`
-  resources; it does not confirm the MicroVM resources actually build).
-- **NOT deployed or tested end to end:** the CloudFormation stack itself (the
-  actual `AWS::Lambda::MicrovmImage` build, `run_microvm`/`create_microvm_auth_token`
-  calls against a real account, the orchestrator's S3 round trip, cold-start
-  timing for this specific image). AWS Lambda MicroVMs GA'd 2026-06-22 and this
-  was built from reading AWS's own reference sample's source rather than from a
-  live deployment of this exact stack. **Deploy into a throwaway account/stack
-  and confirm `POST /ocr` works before relying on this.**
-- A few CloudFormation property choices are documented as unverified guesses
-  rather than confirmed facts -- search `template.yaml` for the comments next
-  to `AdditionalOsCapabilities` and `BaseMemoryMiB`.
+- **Deployed and exercised end to end, in a real account (us-east-1):**
+  `cloudformation deploy` created `AWS::Lambda::MicrovmImage`,
+  `AWS::Lambda::Function` and the IAM-authorized HTTP API; `POST /ocr` against
+  the live, SigV4-signed API correctly transcribed real Japanese test images
+  (`paragraph.png`, `table.png`), byte-for-byte matching known ground truth,
+  including the table rendered as `<table>` markup. An **unsigned** `curl` to
+  the same URL got `403` before reaching Lambda, confirmed live, and
+  `list_microvms()` showed a real `RUNNING` MicroVM (`microvm-0...`) at the
+  same timestamp the OCR call returned. Measured from CloudWatch's own
+  `REPORT` lines for the orchestrator Lambda (not client-side wall clock,
+  which includes network noise unrelated to the system under test):
+  - **Cold start (`run_microvm` through a ready, OCR'd reply): ~3.1s total
+    orchestrator duration.** Far below the reference implementation's own
+    11-82s, which tracks: that image mounts EFS over NFS and boots a Node.js
+    app; this one has no EFS, no VPC egress, and a model two orders of
+    magnitude smaller.
+  - **Warm reuse (VM already `RUNNING`, fresh token minted, one HTTP round
+    trip): ~250-340ms orchestrator duration**, of which the sidecar's own
+    `/ocr` processing was 0.12-0.15s.
+  - The stack was torn down after verification (`terminate_microvm` + stack
+    delete + artifact bucket delete) rather than left running an
+    internet-facing endpoint indefinitely; re-run `scripts/deploy.sh` to stand
+    it back up.
+- **Two real bugs this deployment found and fixed, that no amount of reading
+  the reference implementation's source would have caught:**
+  1. `AWS::Lambda::MicrovmImage` rejects the stack outright if
+     `EnvironmentVariables`, `AdditionalOsCapabilities` or
+     `EgressNetworkConnectors` are absent -- `aws cloudformation
+     describe-events --change-set-name ...` reported `Required property
+     [...] not found` for all three. The reference implementation's own
+     template sets non-empty values for all three (it needs them), which
+     reads as "these are optional, set only if needed" until you try
+     omitting one. Fixed by setting all three to `[]` in `template.yaml`.
+  2. The Dockerfile set `ENV INDRA_OCR_MODEL_DIR=/opt/indra-ocr/models`
+     *before* the `RUN` step that downloads the model weights into that
+     directory. `indra_ocr.models.model_dir()` checks that env var first and,
+     if set, takes the "local folder, must already have the files" branch
+     instead of downloading -- so the build failed with `ModelError: the
+     model folder /opt/indra-ocr/models lacks det.onnx, rec.onnx, meta.json`,
+     a straightforward chicken-and-egg ordering bug, visible only in the
+     MicrovmImage build's own CloudWatch log group
+     (`aws logs get-log-events --log-group-name
+     /aws/lambda-microvms/<project>-image`). Fixed by moving the `ENV` line
+     to after the download-and-copy `RUN` step.
+- **Still not independently verified:** concurrent requests (see "No
+  concurrency" below), `--math` mode, S3-ref mode (`{s3_bucket,s3_key}` --
+  the code path was unit-tested but not exercised against a real bucket in
+  this run), and whether `BaseMemoryMiB` can be lowered below 2048 (not
+  re-tuned down from the reference implementation's default).
 
 ## What this sample does not do
 
@@ -146,13 +197,9 @@ Being specific about this rather than implying more than was done:
 - **No math OCR.** `--math` mode downloads extra model files and wasn't baked
   into the image; add it to `Dockerfile` and `sidecar.py`'s `load()` call if you
   need LaTeX output for formulas.
-- **No independent cold-start measurement for this image.** The reference
-  implementation's own cold-start investigation
-  ([`docs/perf/cold-start.md`](https://github.com/aws-samples/sample-multi-tenant-ai-agents-on-lambda-microvm/blob/main/docs/perf/cold-start.md)
-  in the same repo) is about a much heavier Node.js app with an EFS mount; this
-  image's cold start was not measured because it was never deployed. Expect it
-  to be smaller (no EFS, no Node boot, a tiny model) but don't assume a number
-  until you've measured one.
+- **`BaseMemoryMiB` was not re-tuned down.** 2048 (matching the reference
+  implementation's own default) worked and was not an independently
+  established lower bound for a model this small -- it may well run on less.
 
 ## Layout
 
@@ -163,7 +210,8 @@ microvm/sidecar.py          Lifecycle hooks + /ocr, model loaded once at process
 microvm/make_sample.py      Build-time helper: tiny image used only to prewarm /validate
 orchestrator/handler.py     API Gateway -> MicroVM proxy (run_microvm, token, S3 I/O)
 scripts/deploy.sh           Create artifact bucket, build both zips, `cloudformation deploy`
-scripts/invoke_example.sh   curl examples for both input modes
+scripts/invoke_example.sh   End-to-end example for both input modes, SigV4-signed
+scripts/sigv4_request.py    SigV4-signs a request against the AWS_IAM-authorized API
 tests/test_handler_validation.py   No-AWS-needed unit tests for the orchestrator's request parsing
 ```
 
@@ -181,6 +229,10 @@ API=$(aws cloudformation describe-stacks --stack-name indra-ocr-microvm \
 ./invoke_example.sh "$API" /path/to/some-page.png md
 ```
 
-The first `/ocr` call cold-starts the MicroVM (expect it to take a while --
-unmeasured for this image, see above); later calls while it's RUNNING or
-SUSPENDED reuse it.
+The first `/ocr` call cold-starts the MicroVM (~3.1s measured, see "What was
+actually verified" above); later calls while it's RUNNING or SUSPENDED reuse
+it (~250-340ms measured). **Remember to tear the stack down
+(`aws cloudformation delete-stack`, after `terminate_microvm` on any VM the
+registry still points at) when you're done** -- it is an internet-facing API
+Gateway endpoint, IAM-authorized but still internet-reachable, for as long as
+the stack exists.

@@ -110,11 +110,19 @@ Resources:
         - Architecture: ARM_64
       Resources:
         - MinimumMemoryInMiB: !Ref BaseMemoryMiB
-      # No AdditionalOsCapabilities: this sidecar is a plain Python HTTP
-      # server with no need for root, NFS mounts, or any other elevated
-      # capability the reference implementation's EFS-mounting image needed.
-      # Property omitted rather than set to [] since neither value was
-      # independently verified against the resource schema (see README.md).
+      # EnvironmentVariables, AdditionalOsCapabilities and EgressNetworkConnectors
+      # are, contrary to what the reference implementation's own template might
+      # suggest, REQUIRED properties -- CloudFormation's early validation rejects
+      # the resource outright if any is absent (confirmed live via
+      # `aws cloudformation describe-events --change-set-name ...`, which is the
+      # only place this resource's actual required-property list is written down
+      # anywhere outside AWS's internal schema). Empty lists satisfy "required":
+      # this sidecar needs no extra OS capabilities (plain Python HTTP server, no
+      # root/NFS) and no custom VPC egress (the model is baked into the image --
+      # see microvm/Dockerfile -- so nothing inside the VM makes an outbound call).
+      EnvironmentVariables: []
+      AdditionalOsCapabilities: []
+      EgressNetworkConnectors: []
       Logging:
         CloudWatch:
           LogGroup: !Sub '/aws/lambda-microvms/${ProjectName}-image'
@@ -224,12 +232,49 @@ Resources:
           BASE_MEMORY_MIB: !Ref BaseMemoryMiB
 
   # ---------- API Gateway HTTP API -> orchestrator (payload v2 proxy) ----------
+  # AWS_IAM authorization on every route, not the `Target:` shorthand (which
+  # creates a NONE-authorization $default route) -- a MicroVM-backed endpoint
+  # with no auth is exactly the kind of internet-reachable, unauthenticated
+  # listener an internal security scan flags. Every request must be SigV4-signed
+  # by a caller the ApiInvokePermission-equivalent identity policy allows (see
+  # scripts/invoke_example.sh, which signs with botocore's SigV4Auth); an
+  # unsigned request gets a 403 from API Gateway and never reaches Lambda.
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
       Name: !Sub '${ProjectName}-api'
       ProtocolType: HTTP
-      Target: !GetAtt OrchestratorFn.Arn
+
+  OrchestratorIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt OrchestratorFn.Arn
+      PayloadFormatVersion: '2.0'
+
+  OcrRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /ocr'
+      AuthorizationType: AWS_IAM
+      Target: !Sub 'integrations/${OrchestratorIntegration}'
+
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /health'
+      AuthorizationType: AWS_IAM
+      Target: !Sub 'integrations/${OrchestratorIntegration}'
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: '$default'
+      AutoDeploy: true
 
   ApiInvokePermission:
     Type: AWS::Lambda::Permission
