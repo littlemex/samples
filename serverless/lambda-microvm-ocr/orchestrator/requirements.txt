@@ -1,0 +1,7 @@
+# The Lambda Python 3.12 runtime's built-in boto3/botocore predates the
+# lambda-microvms service model (MicroVMs GA'd 2026-06-22); without bundling a
+# current boto3 here, boto3.client("lambda-microvms") raises
+# UnknownServiceError. The reference implementation this handler's API calls
+# are taken from bundles boto3 into its orchestrator zip for the same reason
+# (see handler.py's module docstring).
+boto3>=1.35.90

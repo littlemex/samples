@@ -1,0 +1,253 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Indra OCR (https://github.com/datalab-to/indra) served from a single AWS
+  Lambda MicroVM, fronted by an orchestrator Lambda behind an HTTP API.
+  AWS::Lambda::MicrovmImage and the orchestrator's calls to the lambda-microvms
+  service are native/GA (2026-06-22); see ../README.md for what is and is not
+  independently verified in this template. deploy.sh's only imperative step is
+  uploading the two zip artifacts to S3 before this stack's create/update runs
+  (CloudFormation cannot author S3 object *contents*) -- everything else here
+  is declarative.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: indra-ocr-microvm
+    Description: Prefix for named resources.
+  ArtifactBucketName:
+    Type: String
+    Description: >
+      Existing S3 bucket holding the uploaded zips. deploy.sh creates this
+      bucket (if missing) and uploads both zips before this stack's
+      create/update, because the MicrovmImage and orchestrator resources need
+      the objects to exist at create time.
+  MicrovmImageKey:
+    Type: String
+    Default: microvm-images/indra-ocr.zip
+    Description: S3 key (in the artifact bucket) of the zipped MicroVM build context (Dockerfile + sidecar.py + make_sample.py).
+  OrchestratorCodeKey:
+    Type: String
+    Default: lambda/orchestrator.zip
+    Description: S3 key of the bundled orchestrator Lambda zip (handler.py + boto3, see orchestrator/requirements.txt).
+  BaseMemoryMiB:
+    Type: Number
+    Default: 2048
+    Description: >
+      MicroVM baseline memory. CPU is allocated at a fixed 2 GiB : 1 vCPU
+      ratio by the platform's own pricing model; 2048 matches the reference
+      implementation's own default and was not independently re-tuned down
+      for Indra OCR's much smaller model (see ../README.md).
+  OcrBucketName:
+    Type: String
+    Default: ''
+    Description: >
+      Optional. Only needed if you intend to call /ocr with {s3_bucket,s3_key}
+      instead of {content_b64}. Leave blank to skip granting any S3
+      permissions to the orchestrator.
+
+Conditions:
+  HasOcrBucket: !Not [!Equals [!Ref OcrBucketName, '']]
+
+Resources:
+
+  # ---------- IAM: MicroVM image build role (the platform assumes this to build the image) ----------
+  MicroVMBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-MicroVMBuildRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: [sts:AssumeRole, sts:TagSession]
+            Condition: { StringEquals: { aws:SourceAccount: !Ref AWS::AccountId } }
+      Policies:
+        - PolicyName: build
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject]
+                Resource: !Sub 'arn:aws:s3:::${ArtifactBucketName}/*'
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda-microvms/*'
+
+  # ---------- IAM: MicroVM execution role (runtime; this workload makes no AWS calls of its own) ----------
+  MicroVMExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-MicroVMExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: [sts:AssumeRole, sts:TagSession]
+            Condition: { StringEquals: { aws:SourceAccount: !Ref AWS::AccountId } }
+      Policies:
+        - PolicyName: runtime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda-microvms/*'
+
+  # ---------- MicroVM image (native CFN resource; the platform builds it on create/update) ----------
+  MicrovmImage:
+    Type: AWS::Lambda::MicrovmImage
+    Properties:
+      Name: !Sub '${ProjectName}-image'
+      BaseImageArn: !Sub 'arn:aws:lambda:${AWS::Region}:aws:microvm-image:al2023-1'
+      BaseImageVersion: '0'
+      BuildRoleArn: !GetAtt MicroVMBuildRole.Arn
+      Description: Indra OCR sidecar image (model weights baked in; no runtime network calls)
+      CodeArtifact:
+        Uri: !Sub 's3://${ArtifactBucketName}/${MicrovmImageKey}'
+      CpuConfigurations:
+        - Architecture: ARM_64
+      Resources:
+        - MinimumMemoryInMiB: !Ref BaseMemoryMiB
+      # No AdditionalOsCapabilities: this sidecar is a plain Python HTTP
+      # server with no need for root, NFS mounts, or any other elevated
+      # capability the reference implementation's EFS-mounting image needed.
+      # Property omitted rather than set to [] since neither value was
+      # independently verified against the resource schema (see README.md).
+      Logging:
+        CloudWatch:
+          LogGroup: !Sub '/aws/lambda-microvms/${ProjectName}-image'
+      # Ready/Validate/Run: see microvm/sidecar.py's `hook()` for what each one
+      # actually does for this image (gate the snapshot on a loaded model; run
+      # one OCR pass on a baked-in sample image so the platform prefetches the
+      # real inference path's pages; no-op, since there is no per-tenant state).
+      Hooks:
+        Port: 8080
+        MicrovmHooks:
+          Run: ENABLED
+          RunTimeoutInSeconds: 10
+        MicrovmImageHooks:
+          Ready: ENABLED
+          ReadyTimeoutInSeconds: 120
+          Validate: ENABLED
+          ValidateTimeoutInSeconds: 180
+
+  # ---------- SSM: where the orchestrator remembers the one MicroVM it owns ----------
+  MicrovmRegistryParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/${ProjectName}/current-microvm'
+      Type: String
+      Value: '{}'
+      Description: JSON {microvmId, endpoint} of the currently tracked MicroVM, or {} if none.
+
+  # ---------- IAM: orchestrator Lambda role ----------
+  OrchestratorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-OrchestratorRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: orchestrate
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+              - Sid: MicroVMs
+                Effect: Allow
+                Action:
+                  - lambda:RunMicrovm
+                  - lambda:GetMicrovm
+                  - lambda:ListMicrovms
+                  - lambda:SuspendMicrovm
+                  - lambda:ResumeMicrovm
+                  - lambda:TerminateMicrovm
+                  - lambda:CreateMicrovmAuthToken
+                Resource: '*'
+              - Sid: PassExecRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt MicroVMExecutionRole.Arn
+              - Sid: PassIngressConnector
+                Effect: Allow
+                Action: lambda:PassNetworkConnector
+                # AWS-managed default ingress connector; no custom
+                # AWS::Lambda::NetworkConnector is declared in this template
+                # because this workload needs no custom VPC egress (model is
+                # baked into the image -- see microvm/Dockerfile).
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:aws:network-connector:aws-network-connector:*'
+              - Sid: Registry
+                Effect: Allow
+                Action: [ssm:GetParameter, ssm:PutParameter]
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/*'
+        - !If
+          - HasOcrBucket
+          - PolicyName: ocr-bucket
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: [s3:GetObject, s3:PutObject]
+                  Resource: !Sub 'arn:aws:s3:::${OcrBucketName}/*'
+          - !Ref AWS::NoValue
+
+  # ---------- Orchestrator Lambda ----------
+  OrchestratorFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-orchestrator'
+      Runtime: python3.12
+      Architectures: [arm64]
+      Handler: handler.handler
+      Role: !GetAtt OrchestratorRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Ref OrchestratorCodeKey
+      Environment:
+        Variables:
+          IMAGE_ARN: !GetAtt MicrovmImage.ImageArn
+          IMAGE_VERSION: !GetAtt MicrovmImage.LatestActiveImageVersion
+          EXEC_ROLE_ARN: !GetAtt MicroVMExecutionRole.Arn
+          INGRESS_CONNECTOR: !Sub 'arn:aws:lambda:${AWS::Region}:aws:network-connector:aws-network-connector:ALL_INGRESS'
+          SSM_PARAM_NAME: !Ref MicrovmRegistryParam
+          BASE_MEMORY_MIB: !Ref BaseMemoryMiB
+
+  # ---------- API Gateway HTTP API -> orchestrator (payload v2 proxy) ----------
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${ProjectName}-api'
+      ProtocolType: HTTP
+      Target: !GetAtt OrchestratorFn.Arn
+
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OrchestratorFn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*'
+
+Outputs:
+  ApiEndpoint:
+    Description: Base URL; POST <ApiEndpoint>/ocr, GET <ApiEndpoint>/health
+    Value: !GetAtt HttpApi.ApiEndpoint
+  ArtifactBucket:
+    Value: !Ref ArtifactBucketName
+  MicrovmImageArn:
+    Value: !GetAtt MicrovmImage.ImageArn
+  MicrovmImageVersion:
+    Value: !GetAtt MicrovmImage.LatestActiveImageVersion
+  OrchestratorFunctionName:
+    Value: !Ref OrchestratorFn
