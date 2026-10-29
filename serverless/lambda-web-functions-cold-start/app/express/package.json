@@ -1,0 +1,11 @@
+{
+  "name": "wf-coldstart-express",
+  "private": true,
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "3.1159.0",
+    "@aws-sdk/client-s3": "3.1159.0",
+    "express": "5.3.0"
+  }
+}

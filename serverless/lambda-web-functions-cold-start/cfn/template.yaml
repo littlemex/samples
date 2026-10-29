@@ -1,0 +1,505 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Measures AWS Lambda Web Functions cold starts. Three Web Functions (minimal, express,
+  padded) behind IamAuth endpoints, fronted by one CloudFront distribution that signs
+  origin requests with OAC and admits only Cognito-issued access tokens (checked by a
+  Lambda@Edge viewer-request function). A scheduled prober Lambda calls them after they
+  scale to zero and records how long the first request takes. Deploy in us-east-1
+  (Lambda@Edge functions must live there).
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: wf-coldstart
+    AllowedPattern: '^[a-z][a-z0-9-]{2,30}$'
+  ArtifactBucketName:
+    Type: String
+    Description: Bucket created by cfn/artifacts.yaml; deploy.sh uploads the zips there first.
+  MinimalKey:
+    Type: String
+    Default: web/minimal.zip
+  MinimalVersionId:
+    Type: String
+    Description: S3 object version of the minimal package. A new value creates a new revision.
+  ExpressKey:
+    Type: String
+    Default: web/express.zip
+  ExpressVersionId:
+    Type: String
+  PaddedKey:
+    Type: String
+    Default: web/padded.zip
+  PaddedVersionId:
+    Type: String
+  ProberKey:
+    Type: String
+    Default: prober/prober.zip
+  ProberVersionId:
+    Type: String
+  ScheduleRateMinutes:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    Description: How often the prober runs. Must be longer than the scale-to-zero idle time.
+  ScheduleState:
+    Type: String
+    Default: DISABLED
+    AllowedValues: [ENABLED, DISABLED]
+  EdgeJwks:
+    Type: String
+    Default: ''
+    Description: >
+      The user pool's JWKS JSON, written into the Lambda@Edge code so a cold edge function
+      does not fetch it from Cognito on its first request. Empty means fetch at runtime.
+      deploy.sh fills it in from the second deploy on (the pool does not exist before the first).
+  EdgeJwksHash:
+    Type: String
+    Default: none
+    Description: Hash of EdgeJwks. A new value publishes a new Lambda@Edge version.
+
+Resources:
+  # ---------------------------------------------------------------- Web Functions
+  WebFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/web/${ProjectName}-*:*'
+                  - !Sub 'arn:${AWS::Partition}:logs:*:${AWS::AccountId}:log-group:/aws/lambda/web/${ProjectName}-*.local:*'
+
+  MinimalLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/web/${ProjectName}-minimal'
+      RetentionInDays: 14
+  ExpressLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/web/${ProjectName}-express'
+      RetentionInDays: 14
+  PaddedLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/web/${ProjectName}-padded'
+      RetentionInDays: 14
+
+  MinimalFunction:
+    Type: AWS::Lambda::WebFunction
+    DependsOn: MinimalLogGroup
+    Properties:
+      FunctionName: !Sub '${ProjectName}-minimal'
+  MinimalRevision:
+    Type: AWS::Lambda::WebFunctionRevision
+    DependsOn: MinimalFunction
+    Properties:
+      FunctionName: !Sub '${ProjectName}-minimal'
+      Description: node:http only, no dependencies
+      BuildConfig:
+        CodeConfig:
+          S3Object: { Bucket: !Ref ArtifactBucketName, Key: !Ref MinimalKey, VersionId: !Ref MinimalVersionId }
+        RuntimeConfig: { Runtime: nodejs24.x }
+      ServiceConfig:
+        ExecutionRoleArn: !GetAtt WebFunctionRole.Arn
+        TimeoutSeconds: 30
+        EnvironmentVariables: { VARIANT: minimal }
+        TelemetryConfig:
+          LoggingConfig: { SystemLogLevel: DEBUG, ApplicationLogLevel: INFO }
+  MinimalEndpoint:
+    Type: AWS::Lambda::WebFunctionEndpoint
+    DependsOn: MinimalFunction
+    Properties:
+      FunctionName: !Sub '${ProjectName}-minimal'
+      EndpointName: probe
+      EndpointType: HomeRegion
+      AuthType: IamAuth
+      RevisionWeights:
+        - { RevisionId: !GetAtt MinimalRevision.RevisionId, Weight: 100 }
+
+  ExpressFunction:
+    Type: AWS::Lambda::WebFunction
+    DependsOn: ExpressLogGroup
+    Properties:
+      FunctionName: !Sub '${ProjectName}-express'
+  ExpressRevision:
+    Type: AWS::Lambda::WebFunctionRevision
+    DependsOn: ExpressFunction
+    Properties:
+      FunctionName: !Sub '${ProjectName}-express'
+      Description: Express 5 plus two AWS SDK v3 clients built at startup
+      BuildConfig:
+        CodeConfig:
+          S3Object: { Bucket: !Ref ArtifactBucketName, Key: !Ref ExpressKey, VersionId: !Ref ExpressVersionId }
+        RuntimeConfig: { Runtime: nodejs24.x }
+      ServiceConfig:
+        ExecutionRoleArn: !GetAtt WebFunctionRole.Arn
+        TimeoutSeconds: 30
+        EnvironmentVariables: { VARIANT: express }
+        TelemetryConfig:
+          LoggingConfig: { SystemLogLevel: DEBUG, ApplicationLogLevel: INFO }
+  ExpressEndpoint:
+    Type: AWS::Lambda::WebFunctionEndpoint
+    DependsOn: ExpressFunction
+    Properties:
+      FunctionName: !Sub '${ProjectName}-express'
+      EndpointName: probe
+      EndpointType: HomeRegion
+      AuthType: IamAuth
+      RevisionWeights:
+        - { RevisionId: !GetAtt ExpressRevision.RevisionId, Weight: 100 }
+
+  PaddedFunction:
+    Type: AWS::Lambda::WebFunction
+    DependsOn: PaddedLogGroup
+    Properties:
+      FunctionName: !Sub '${ProjectName}-padded'
+  PaddedRevision:
+    Type: AWS::Lambda::WebFunctionRevision
+    DependsOn: PaddedFunction
+    Properties:
+      FunctionName: !Sub '${ProjectName}-padded'
+      Description: the minimal server plus an incompressible file, to isolate package size
+      BuildConfig:
+        CodeConfig:
+          S3Object: { Bucket: !Ref ArtifactBucketName, Key: !Ref PaddedKey, VersionId: !Ref PaddedVersionId }
+        RuntimeConfig: { Runtime: nodejs24.x }
+      ServiceConfig:
+        ExecutionRoleArn: !GetAtt WebFunctionRole.Arn
+        TimeoutSeconds: 30
+        EnvironmentVariables: { VARIANT: padded }
+        TelemetryConfig:
+          LoggingConfig: { SystemLogLevel: DEBUG, ApplicationLogLevel: INFO }
+  PaddedEndpoint:
+    Type: AWS::Lambda::WebFunctionEndpoint
+    DependsOn: PaddedFunction
+    Properties:
+      FunctionName: !Sub '${ProjectName}-padded'
+      EndpointName: probe
+      EndpointType: HomeRegion
+      AuthType: IamAuth
+      RevisionWeights:
+        - { RevisionId: !GetAtt PaddedRevision.RevisionId, Weight: 100 }
+
+  # ---------------------------------------------------------------- Cognito (machine-to-machine)
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${ProjectName}-pool'
+      AdminCreateUserConfig: { AllowAdminCreateUserOnly: true }
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Sub '${ProjectName}-${AWS::AccountId}'
+  ResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      Identifier: !Ref ProjectName
+      Name: !Sub '${ProjectName}-api'
+      Scopes:
+        - { ScopeName: invoke, ScopeDescription: Call the measured Web Functions through CloudFront }
+  ProberClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: ResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: !Sub '${ProjectName}-prober'
+      GenerateSecret: true
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [client_credentials]
+      AllowedOAuthScopes: [!Sub '${ProjectName}/invoke']
+      AccessTokenValidity: 60
+      TokenValidityUnits: { AccessToken: minutes }
+  ProberClientSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${ProjectName}/prober-client'
+      SecretString: !Sub '{"clientId":"${ProberClient}","clientSecret":"${ProberClient.ClientSecret}"}'
+
+  # ---------------------------------------------------------------- Lambda@Edge: Cognito JWT check
+  EdgeAuthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: [lambda.amazonaws.com, edgelambda.amazonaws.com] }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:${AWS::Partition}:logs:*:${AWS::AccountId}:log-group:/aws/lambda/*${ProjectName}-edge-auth:*'
+  EdgeAuthFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-edge-auth'
+      Runtime: nodejs22.x
+      Handler: index.handler
+      MemorySize: 128
+      Timeout: 5
+      Role: !GetAtt EdgeAuthRole.Arn
+      Code:
+        # Lambda@Edge cannot use environment variables, so the pool, client and scope
+        # are written into the code here. Plain node:crypto, no dependencies.
+        ZipFile: !Sub |
+          'use strict';
+          const crypto = require('crypto');
+          const https = require('https');
+          const ISS = 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}';
+          const CLIENT_ID = '${ProberClient}';
+          const SCOPE = '${ProjectName}/invoke';
+          const EMBEDDED = '${EdgeJwks}';
+          let keys = null;
+          let keysAt = 0;
+          function toKeys(jwks) {
+            const next = {};
+            for (const k of jwks.keys) next[k.kid] = crypto.createPublicKey({ key: k, format: 'jwk' });
+            return next;
+          }
+          if (EMBEDDED) { keys = toKeys(JSON.parse(EMBEDDED)); keysAt = Infinity; }
+          function loadKeys() {
+            if (keys && Date.now() - keysAt < 3600000) return Promise.resolve(keys);
+            return new Promise((resolve, reject) => {
+              https.get(ISS + '/.well-known/jwks.json', (res) => {
+                let data = '';
+                res.on('data', (c) => { data += c; });
+                res.on('end', () => {
+                  try { keys = toKeys(JSON.parse(data)); keysAt = Date.now(); resolve(keys); } catch (e) { reject(e); }
+                });
+              }).on('error', reject);
+            });
+          }
+          const DENY = {
+            status: '401', statusDescription: 'Unauthorized', body: 'unauthorized',
+            headers: {
+              'www-authenticate': [{ key: 'WWW-Authenticate', value: 'Bearer' }],
+              'cache-control': [{ key: 'Cache-Control', value: 'no-store' }],
+            },
+          };
+          const b64 = (s) => Buffer.from(s, 'base64url');
+          exports.handler = async (event) => {
+            const req = event.Records[0].cf.request;
+            const auth = req.headers.authorization && req.headers.authorization[0].value;
+            if (!auth || !auth.startsWith('Bearer ')) return DENY;
+            const parts = auth.slice(7).split('.');
+            if (parts.length !== 3) return DENY;
+            try {
+              const header = JSON.parse(b64(parts[0]).toString());
+              const claims = JSON.parse(b64(parts[1]).toString());
+              if (header.alg !== 'RS256') return DENY;
+              const key = (await loadKeys())[header.kid];
+              if (!key) return DENY;
+              if (!crypto.verify('RSA-SHA256', Buffer.from(parts[0] + '.' + parts[1]), key, b64(parts[2]))) return DENY;
+              const now = Math.floor(Date.now() / 1000);
+              const scopes = String(claims.scope || '').split(' ');
+              if (claims.iss !== ISS || claims.token_use !== 'access' || claims.client_id !== CLIENT_ID) return DENY;
+              if (!(claims.exp > now) || !scopes.includes(SCOPE)) return DENY;
+            } catch (e) {
+              return DENY;
+            }
+            delete req.headers.authorization;
+            return req;
+          };
+  EdgeAuthVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref EdgeAuthFunction
+      # Versions are immutable: changing this text is what makes CloudFormation publish a
+      # new one when the embedded JWKS changes.
+      Description: !Sub 'jwks ${EdgeJwksHash}'
+
+  # ---------------------------------------------------------------- CloudFront
+  WebFunctionOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${ProjectName}-oac'
+        OriginAccessControlOriginType: lambda
+        SigningBehavior: always-amz-auth
+        SigningProtocol: sigv4
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub '${ProjectName} cold-start probe (Cognito token required)'
+        PriceClass: PriceClass_100
+        HttpVersion: http2and3
+        Origins:
+          - Id: minimal
+            DomainName: !GetAtt MinimalEndpoint.DomainName
+            OriginAccessControlId: !GetAtt WebFunctionOAC.Id
+            CustomOriginConfig: { OriginProtocolPolicy: https-only, HTTPSPort: 443, OriginSSLProtocols: [TLSv1.2] }
+          - Id: express
+            DomainName: !GetAtt ExpressEndpoint.DomainName
+            OriginAccessControlId: !GetAtt WebFunctionOAC.Id
+            CustomOriginConfig: { OriginProtocolPolicy: https-only, HTTPSPort: 443, OriginSSLProtocols: [TLSv1.2] }
+          - Id: padded
+            DomainName: !GetAtt PaddedEndpoint.DomainName
+            OriginAccessControlId: !GetAtt WebFunctionOAC.Id
+            CustomOriginConfig: { OriginProtocolPolicy: https-only, HTTPSPort: 443, OriginSSLProtocols: [TLSv1.2] }
+        DefaultCacheBehavior:
+          TargetOriginId: minimal
+          ViewerProtocolPolicy: https-only
+          AllowedMethods: [GET, HEAD]
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader
+          LambdaFunctionAssociations:
+            - { EventType: viewer-request, LambdaFunctionARN: !Ref EdgeAuthVersion }
+        CacheBehaviors:
+          - PathPattern: /minimal/*
+            TargetOriginId: minimal
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader
+            LambdaFunctionAssociations:
+              - { EventType: viewer-request, LambdaFunctionARN: !Ref EdgeAuthVersion }
+          - PathPattern: /express/*
+            TargetOriginId: express
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader
+            LambdaFunctionAssociations:
+              - { EventType: viewer-request, LambdaFunctionARN: !Ref EdgeAuthVersion }
+          - PathPattern: /padded/*
+            TargetOriginId: padded
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader
+            LambdaFunctionAssociations:
+              - { EventType: viewer-request, LambdaFunctionARN: !Ref EdgeAuthVersion }
+
+  # ---------------------------------------------------------------- Prober
+  ProberLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ProjectName}-prober'
+      RetentionInDays: 30
+  ProberRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: prober
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub '${ProberLogGroup.Arn}:*'
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref ProberClientSecret
+              # Direct path: the prober also signs requests to the endpoints itself, to
+              # measure the same cold start without CloudFront and Lambda@Edge in front.
+              - Effect: Allow
+                Action: lambda:InvokeWebFunctionEndpoint
+                Resource:
+                  - !GetAtt MinimalEndpoint.EndpointArn
+                  - !GetAtt ExpressEndpoint.EndpointArn
+                  - !GetAtt PaddedEndpoint.EndpointArn
+  ProberFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: ProberLogGroup
+    Properties:
+      FunctionName: !Sub '${ProjectName}-prober'
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: prober.handler
+      MemorySize: 1024
+      Timeout: 300
+      Role: !GetAtt ProberRole.Arn
+      Code: { S3Bucket: !Ref ArtifactBucketName, S3Key: !Ref ProberKey, S3ObjectVersion: !Ref ProberVersionId }
+      Environment:
+        Variables:
+          CF_DOMAIN: !GetAtt Distribution.DomainName
+          DIRECT_MINIMAL: !GetAtt MinimalEndpoint.DomainName
+          DIRECT_EXPRESS: !GetAtt ExpressEndpoint.DomainName
+          DIRECT_PADDED: !GetAtt PaddedEndpoint.DomainName
+          TOKEN_URL: !Sub 'https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/token'
+          TOKEN_SCOPE: !Sub '${ProjectName}/invoke'
+          CLIENT_SECRET_ARN: !Ref ProberClientSecret
+          RATE_MINUTES: !Ref ScheduleRateMinutes
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { aws:SourceAccount: !Ref AWS::AccountId }
+      Policies:
+        - PolicyName: invoke-prober
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt ProberFunction.Arn
+  ProbeSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub '${ProjectName}-probe'
+      ScheduleExpression: !Sub 'rate(${ScheduleRateMinutes} minutes)'
+      State: !Ref ScheduleState
+      FlexibleTimeWindow: { Mode: 'OFF' }
+      Target:
+        Arn: !GetAtt ProberFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: '{"mode": "probe", "path": "alternate"}'
+
+Outputs:
+  DistributionDomain:
+    Value: !GetAtt Distribution.DomainName
+  DistributionArn:
+    Value: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+  MinimalFunctionArn:
+    Value: !GetAtt MinimalEndpoint.FunctionArn
+  ExpressFunctionArn:
+    Value: !GetAtt ExpressEndpoint.FunctionArn
+  PaddedFunctionArn:
+    Value: !GetAtt PaddedEndpoint.FunctionArn
+  MinimalEndpointArn:
+    Value: !GetAtt MinimalEndpoint.EndpointArn
+  ExpressEndpointArn:
+    Value: !GetAtt ExpressEndpoint.EndpointArn
+  PaddedEndpointArn:
+    Value: !GetAtt PaddedEndpoint.EndpointArn
+  TokenUrl:
+    Value: !Sub 'https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/token'
+  ClientSecretArn:
+    Value: !Ref ProberClientSecret
+  UserPoolId:
+    Value: !Ref UserPool
+  ProberFunctionName:
+    Value: !Ref ProberFunction
